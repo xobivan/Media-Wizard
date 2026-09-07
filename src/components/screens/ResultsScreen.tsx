@@ -27,6 +27,7 @@ export type ResultsScreenProps = {
   onBack: () => void;
   onContinue: () => void;
   onDeleteDuplicateGroup: (group: DuplicateGroup) => void;
+  onDeleteAllDuplicateGroups: (groups: DuplicateGroup[]) => void;
 };
 
 export function ResultsScreen(props: ResultsScreenProps) {
@@ -40,7 +41,7 @@ export function ResultsScreen(props: ResultsScreenProps) {
         {scanState === 'error' ? <ResultsErrorState error={props.scanError} onRetry={props.onRetry} /> : null}
         {scanState !== 'scanning' && scanState !== 'error' ? <><ResultsSummary summary={props.scanSummary} albumTitle={props.selectedAlbum?.title} />
         <ResultsTabs value={props.tab} onChange={props.onTabChange} />
-        <ResultsSections tab={props.tab} duplicateGroups={props.duplicateGroups} largeVideos={props.largeVideos} selectedLarge={props.selectedLarge} onToggleLarge={props.onToggleLarge} onSelectAll={props.onSelectAll} onContinue={props.onContinue} onDeleteDuplicateGroup={props.onDeleteDuplicateGroup} /></> : null}
+        <ResultsSections tab={props.tab} duplicateGroups={props.duplicateGroups} largeVideos={props.largeVideos} selectedLarge={props.selectedLarge} onToggleLarge={props.onToggleLarge} onSelectAll={props.onSelectAll} onContinue={props.onContinue} onDeleteDuplicateGroup={props.onDeleteDuplicateGroup} onDeleteAllDuplicateGroups={props.onDeleteAllDuplicateGroups} /></> : null}
       </ScrollView>
     </SafeAreaView>);
 }

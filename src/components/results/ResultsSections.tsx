@@ -5,35 +5,44 @@ import type { LargeVideo, ResultTab } from '../types/mediaWizardTypes';
 import type { DuplicateGroup } from '../../services/duplicateDetection';
 import { styles } from '../styles/mediaWizardStyles';
 
-type SectionProps = { duplicateGroups: DuplicateGroup[]; largeVideos: LargeVideo[]; selectedLarge: string[]; onToggleLarge: (id: string) => void; onSelectAll: () => void; onContinue: () => void; onDeleteDuplicateGroup: (group: DuplicateGroup) => void };
+type SectionProps = { duplicateGroups: DuplicateGroup[]; largeVideos: LargeVideo[]; selectedLarge: string[]; onToggleLarge: (id: string) => void; onSelectAll: () => void; onContinue: () => void; onDeleteDuplicateGroup: (group: DuplicateGroup) => void; onDeleteAllDuplicateGroups: (groups: DuplicateGroup[]) => void };
 
 export function ResultsSections({ tab, ...props }: SectionProps & { tab: ResultTab }) {
-  if (tab === 'Photos') return <DuplicatePhotos groups={props.duplicateGroups.filter((group) => group.mediaType === 'photo')} onDeleteGroup={props.onDeleteDuplicateGroup} />;
-  if (tab === 'Videos') return <DuplicateVideos groups={props.duplicateGroups.filter((group) => group.mediaType === 'video')} onDeleteGroup={props.onDeleteDuplicateGroup} />;
+  if (tab === 'Photos') return <DuplicatePhotos groups={props.duplicateGroups.filter((group) => group.mediaType === 'photo')} onDeleteGroup={props.onDeleteDuplicateGroup} onDeleteAllGroups={props.onDeleteAllDuplicateGroups} />;
+  if (tab === 'Videos') return <DuplicateVideos groups={props.duplicateGroups.filter((group) => group.mediaType === 'video')} onDeleteGroup={props.onDeleteDuplicateGroup} onDeleteAllGroups={props.onDeleteAllDuplicateGroups} />;
   return <LargeVideos {...props} />;
 }
 
-function DuplicatePhotos({ groups, onDeleteGroup }: { groups: DuplicateGroup[]; onDeleteGroup: (group: DuplicateGroup) => void }) {
+function DuplicatePhotos({ groups, onDeleteGroup, onDeleteAllGroups }: { groups: DuplicateGroup[]; onDeleteGroup: (group: DuplicateGroup) => void; onDeleteAllGroups: (groups: DuplicateGroup[]) => void }) {
   return (
     <>
       <Text style={styles.groupHeading}>
         Duplicate photos
       </Text>
 
-      {groups.length === 0 ? <Text style={styles.selectionHint}>No exact duplicate photos found.</Text> : groups.map((group) => <DuplicateGroupCard key={group.assets[0].fingerprint} group={group} onDelete={() => onDeleteGroup(group)} />)}
+      {groups.length === 0 ? <Text style={styles.selectionHint}>No exact duplicate photos found.</Text> : <>{groups.map((group) => <DuplicateGroupCard key={group.assets[0].fingerprint} group={group} onDelete={() => onDeleteGroup(group)} />)}<DeleteAllButton groups={groups} onPress={() => onDeleteAllGroups(groups)} /></>}
     </>
   );
 }
 
-function DuplicateVideos({ groups, onDeleteGroup }: { groups: DuplicateGroup[]; onDeleteGroup: (group: DuplicateGroup) => void }) {
+function DuplicateVideos({ groups, onDeleteGroup, onDeleteAllGroups }: { groups: DuplicateGroup[]; onDeleteGroup: (group: DuplicateGroup) => void; onDeleteAllGroups: (groups: DuplicateGroup[]) => void }) {
   return (
     <>
       <Text style={styles.groupHeading}>
         Duplicate videos
       </Text>
 
-      {groups.length === 0 ? <Text style={styles.selectionHint}>No exact duplicate videos found.</Text> : groups.map((group) => <DuplicateGroupCard key={group.assets[0].fingerprint} group={group} onDelete={() => onDeleteGroup(group)} />)}
+      {groups.length === 0 ? <Text style={styles.selectionHint}>No exact duplicate videos found.</Text> : <>{groups.map((group) => <DuplicateGroupCard key={group.assets[0].fingerprint} group={group} onDelete={() => onDeleteGroup(group)} />)}<DeleteAllButton groups={groups} onPress={() => onDeleteAllGroups(groups)} /></>}
     </>
+  );
+}
+
+function DeleteAllButton({ groups, onPress }: { groups: DuplicateGroup[]; onPress: () => void }) {
+  const duplicateCount = groups.reduce((total, group) => total + group.assets.length - 1, 0);
+  return (
+    <Pressable style={styles.deleteAllButton} onPress={onPress}>
+      <Text style={styles.deleteButtonText}>Delete all {duplicateCount} duplicates</Text>
+    </Pressable>
   );
 }
 

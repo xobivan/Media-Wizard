@@ -142,6 +142,7 @@ export const styles = StyleSheet.create({
   duplicateAsset: { color: '#8B9992', fontSize: 12, marginBottom: 5 },
   duplicateAssetName: { color: '#29463F', fontSize: 12 },
   deleteButton: { backgroundColor: '#FCEFEA', borderRadius: 10, padding: 12, alignItems: 'center', marginTop: 8 },
+  deleteAllButton: { backgroundColor: '#FCEFEA', borderRadius: 12, padding: 15, alignItems: 'center', marginTop: 16, marginBottom: 8, borderWidth: 1, borderColor: '#E8C9C1' },
   deleteButtonText: { color: '#9F4E40', fontSize: 13, fontWeight: '700' },
   thumbnail: { width: 50, height: 50, borderRadius: 11, backgroundColor: '#DDE8D3', alignItems: 'center', justifyContent: 'center' },
   thumbnailIcon: { color: '#658052', fontSize: 20 },

@@ -28,6 +28,7 @@ export default function App() {
   const [selectedAlbum, setSelectedAlbum] = useState<MediaLibrary.Album | null>(null);
   const [scanSummary, setScanSummary] = useState<ScanSummary>({ photos: 0, videos: 0, total: 0 });
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [duplicateStorageSaved, setDuplicateStorageSaved] = useState(0);
 
   useEffect(() => {
     const handleBackPress = () => {
@@ -127,7 +128,36 @@ export default function App() {
         onPress: () => {
           void MediaLibrary.deleteAssetsAsync(duplicates.map((asset) => asset.id))
             .then(() => {
+              const savedBytes = duplicates.reduce((total, asset) => total + asset.size, 0);
+              setDuplicateStorageSaved((current) => current + savedBytes);
               setDuplicateGroups((current) => current.filter((candidate) => candidate !== group));
+              Alert.alert('Duplicates deleted', `${formatBytes(savedBytes)} of storage saved.`);
+            })
+            .catch((error: unknown) => {
+              Alert.alert('Could not delete duplicates', error instanceof Error ? error.message : 'The selected duplicates could not be deleted.');
+            });
+        },
+      },
+    ]);
+  };
+
+  const deleteAllDuplicateGroups = (groups: DuplicateGroup[]) => {
+    const duplicateAssets = groups.flatMap((group) => {
+      const original = group.assets.reduce((oldest, asset) => asset.creationTime < oldest.creationTime ? asset : oldest, group.assets[0]);
+      return group.assets.filter((asset) => asset.id !== original.id);
+    });
+    Alert.alert('Delete all duplicates?', `Keep one original in each group and delete ${duplicateAssets.length} duplicate${duplicateAssets.length === 1 ? '' : 's'}.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete all',
+        style: 'destructive',
+        onPress: () => {
+          void MediaLibrary.deleteAssetsAsync(duplicateAssets.map((asset) => asset.id))
+            .then(() => {
+              const savedBytes = duplicateAssets.reduce((total, asset) => total + asset.size, 0);
+              setDuplicateStorageSaved((current) => current + savedBytes);
+              setDuplicateGroups((current) => current.filter((candidate) => !groups.includes(candidate)));
+              Alert.alert('Duplicates deleted', `${formatBytes(savedBytes)} of storage saved.`);
             })
             .catch((error: unknown) => {
               Alert.alert('Could not delete duplicates', error instanceof Error ? error.message : 'The selected duplicates could not be deleted.');
@@ -140,10 +170,15 @@ export default function App() {
   const content = screen === 'home'
     ? <HomeScreen source={source} permission={permission} scanState={scanState} selectedAlbum={selectedAlbum} albums={albums} albumPickerVisible={albumPickerVisible} onSelectLibrary={() => { setSource('Entire library'); setSelectedAlbum(null); setAlbumPickerVisible(false); }} onChooseFolder={() => void chooseFolder()} onSelectAlbum={(album) => { setSelectedAlbum(album); setSource('Choose a folder'); setAlbumPickerVisible(false); }} onRequestPermission={() => void requestMediaPermission()} onStartScan={() => void startScan()} />
     : screen === 'results'
-      ? <ResultsScreen tab={tab} scanState={scanState} scanProgress={scanProgress} scanError={scanError} scanSummary={scanSummary} selectedAlbum={selectedAlbum} selectedLarge={selectedLarge} largeVideos={largeVideos} duplicateGroups={duplicateGroups} onTabChange={setTab} onToggleLarge={(id) => setSelectedLarge((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onSelectAll={() => setSelectedLarge(selectedLarge.length === largeVideos.length ? [] : largeVideos.map((item) => item.id))} onRetry={() => void startScan()} onBack={() => setScreen('home')} onContinue={() => setScreen('cleanup')} onDeleteDuplicateGroup={deleteDuplicateGroup} />
+      ? <ResultsScreen tab={tab} scanState={scanState} scanProgress={scanProgress} scanError={scanError} scanSummary={scanSummary} selectedAlbum={selectedAlbum} selectedLarge={selectedLarge} largeVideos={largeVideos} duplicateGroups={duplicateGroups} onTabChange={setTab} onToggleLarge={(id) => setSelectedLarge((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onSelectAll={() => setSelectedLarge(selectedLarge.length === largeVideos.length ? [] : largeVideos.map((item) => item.id))} onRetry={() => void startScan()} onBack={() => setScreen('home')} onContinue={() => setScreen('cleanup')} onDeleteDuplicateGroup={deleteDuplicateGroup} onDeleteAllDuplicateGroups={deleteAllDuplicateGroups} />
       : screen === 'cleanup'
         ? <CleanupScreen largeVideos={largeVideos} selectedLarge={selectedLarge} selectedSavings={selectedSavings} keepOriginals={keepOriginals} onBack={() => setScreen('results')} onKeepOriginalsChange={setKeepOriginals} onDone={() => setScreen('done')} />
-        : <DoneScreen selectedSavings={selectedSavings} onHome={() => setScreen('home')} />;
+        : <DoneScreen selectedSavings={selectedSavings} duplicateStorageSaved={duplicateStorageSaved} onHome={() => setScreen('home')} />;
 
   return <SafeAreaProvider>{content}</SafeAreaProvider>;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
