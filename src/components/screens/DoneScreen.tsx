@@ -5,9 +5,11 @@ import { styles } from '../styles/mediaWizardStyles';
 
 export function DoneScreen({
   selectedSavings,
+  duplicateStorageSaved,
   onHome,
 }: {
   selectedSavings: number;
+  duplicateStorageSaved: number;
   onHome: () => void;
 }) {
   return (
@@ -43,7 +45,7 @@ export function DoneScreen({
           </Text>
 
           <Text style={styles.savedValue}>
-            {Math.round(selectedSavings + 194)} MB
+            {formatStorageSaved(selectedSavings, duplicateStorageSaved)}
           </Text>
 
           <Text style={styles.savedDetail}>
@@ -62,4 +64,10 @@ export function DoneScreen({
       </View>
     </SafeAreaView>
   );
+}
+
+function formatStorageSaved(compressedMegabytes: number, duplicateBytes: number): string {
+  const totalMegabytes = compressedMegabytes + duplicateBytes / (1024 * 1024);
+  if (totalMegabytes >= 1024) return `${(totalMegabytes / 1024).toFixed(2)} GB`;
+  return `${Math.round(totalMegabytes)} MB`;
 }
