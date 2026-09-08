@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { Album, PermissionState, ScanState } from '../types/mediaWizardTypes';
+import type { Album, PermissionState, ScanMode, ScanState } from '../types/mediaWizardTypes';
 import { styles } from '../styles/mediaWizardStyles';
 
 type Props = {
@@ -16,6 +16,8 @@ type Props = {
   onSelectAlbum: (album: Album) => void;
   onRequestPermission: () => void;
   onStartScan: () => void;
+  scanMode: ScanMode;
+  onScanModeChange: (mode: ScanMode) => void;
 };
 
 export function HomeScreen({
@@ -30,6 +32,8 @@ export function HomeScreen({
   onSelectAlbum,
   onRequestPermission,
   onStartScan,
+  scanMode,
+  onScanModeChange,
 }: Props) {
   return (
     <SafeAreaView
@@ -153,6 +157,10 @@ export function HomeScreen({
             )}
           </View>
         ) : null}
+
+        <Text style={styles.sectionLabel}>Choose scan depth</Text>
+        <ScanModeOption mode="fast" selected={scanMode === 'fast'} onPress={() => onScanModeChange('fast')} title="Fast scan" detail="Uses exact file matching and finishes sooner." />
+        <ScanModeOption mode="deep" selected={scanMode === 'deep'} onPress={() => onScanModeChange('deep')} title="Deep scan" detail="Normalizes photos to find more duplicates, but may take much longer." />
 
         <View style={styles.privacy}>
           <Text style={styles.privacyIcon}>
@@ -283,5 +291,17 @@ export function HomeScreen({
         </Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function ScanModeOption({ mode: _mode, selected, onPress, title, detail }: { mode: ScanMode; selected: boolean; onPress: () => void; title: string; detail: string }) {
+  return (
+    <Pressable style={[styles.sourceCard, selected && styles.sourceActive]} onPress={onPress}>
+      <View style={styles.sourceText}>
+        <Text style={styles.sourceTitle}>{title}</Text>
+        <Text style={styles.sourceDetail}>{detail}</Text>
+      </View>
+      <Text style={styles.radio}>{selected ? '●' : '○'}</Text>
+    </Pressable>
   );
 }

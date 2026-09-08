@@ -6,8 +6,9 @@ import { CleanupScreen } from './src/components/screens/CleanupScreen';
 import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
-import type { LargeVideo, PermissionState, ResultTab, ScanState, ScanSummary } from './src/components/types/mediaWizardTypes';
+import type { LargeVideo, PermissionState, ResultTab, ScanMode, ScanState, ScanSummary } from './src/components/types/mediaWizardTypes';
 import { findDuplicateGroups, type DuplicateGroup } from './src/services/duplicateDetection';
+import { findDuplicateGroupsLegacy } from './src/services/duplicateDetectionLegacy';
 import { findLargeVideos } from './src/services/largeVideoDetection';
 
 type Screen = 'home' | 'results' | 'cleanup' | 'done';
@@ -29,6 +30,7 @@ export default function App() {
   const [scanSummary, setScanSummary] = useState<ScanSummary>({ photos: 0, videos: 0, total: 0 });
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [duplicateStorageSaved, setDuplicateStorageSaved] = useState(0);
+  const [scanMode, setScanMode] = useState<ScanMode>('fast');
 
   useEffect(() => {
     const handleBackPress = () => {
@@ -98,7 +100,9 @@ export default function App() {
         after = page.endCursor;
       }
 
-      const groups = await findDuplicateGroups(assets, (progress) => setScanProgress(50 + Math.round(progress / 2)));
+      const groups = scanMode === 'deep'
+        ? await findDuplicateGroups(assets, (progress) => setScanProgress(50 + Math.round(progress / 2)))
+        : await findDuplicateGroupsLegacy(assets, (progress) => setScanProgress(50 + Math.round(progress / 2)));
       const detectedLargeVideos = await findLargeVideos(assets);
       setDuplicateGroups(groups);
       setLargeVideos(detectedLargeVideos);
@@ -116,6 +120,10 @@ export default function App() {
     () => largeVideos.filter((video) => selectedLarge.includes(video.id)).reduce((sum, video) => sum + video.savings, 0),
     [largeVideos, selectedLarge],
   );
+  const estimatedSavings = duplicateGroups.reduce((total, group) => {
+    const original = group.assets.reduce((oldest, asset) => asset.creationTime < oldest.creationTime ? asset : oldest, group.assets[0]);
+    return total + group.assets.filter((asset) => asset.id !== original.id).reduce((sum, asset) => sum + asset.size, 0);
+  }, 0) + selectedSavings * 1024 * 1024;
 
   const deleteDuplicateGroup = (group: DuplicateGroup) => {
     const original = group.assets.reduce((oldest, asset) => asset.creationTime < oldest.creationTime ? asset : oldest, group.assets[0]);
@@ -131,6 +139,7 @@ export default function App() {
               const savedBytes = duplicates.reduce((total, asset) => total + asset.size, 0);
               setDuplicateStorageSaved((current) => current + savedBytes);
               setDuplicateGroups((current) => current.filter((candidate) => candidate !== group));
+              removeDeletedAssetsFromSummary(duplicates);
               Alert.alert('Duplicates deleted', `${formatBytes(savedBytes)} of storage saved.`);
             })
             .catch((error: unknown) => {
@@ -157,6 +166,7 @@ export default function App() {
               const savedBytes = duplicateAssets.reduce((total, asset) => total + asset.size, 0);
               setDuplicateStorageSaved((current) => current + savedBytes);
               setDuplicateGroups((current) => current.filter((candidate) => !groups.includes(candidate)));
+              removeDeletedAssetsFromSummary(duplicateAssets);
               Alert.alert('Duplicates deleted', `${formatBytes(savedBytes)} of storage saved.`);
             })
             .catch((error: unknown) => {
@@ -167,10 +177,20 @@ export default function App() {
     ]);
   };
 
+  const removeDeletedAssetsFromSummary = (assets: DuplicateGroup['assets']) => {
+    const deletedPhotos = assets.filter((asset) => asset.mediaType === 'photo').length;
+    const deletedVideos = assets.filter((asset) => asset.mediaType === 'video').length;
+    setScanSummary((current) => ({
+      photos: Math.max(0, current.photos - deletedPhotos),
+      videos: Math.max(0, current.videos - deletedVideos),
+      total: Math.max(0, current.total - assets.length),
+    }));
+  };
+
   const content = screen === 'home'
-    ? <HomeScreen source={source} permission={permission} scanState={scanState} selectedAlbum={selectedAlbum} albums={albums} albumPickerVisible={albumPickerVisible} onSelectLibrary={() => { setSource('Entire library'); setSelectedAlbum(null); setAlbumPickerVisible(false); }} onChooseFolder={() => void chooseFolder()} onSelectAlbum={(album) => { setSelectedAlbum(album); setSource('Choose a folder'); setAlbumPickerVisible(false); }} onRequestPermission={() => void requestMediaPermission()} onStartScan={() => void startScan()} />
+    ? <HomeScreen source={source} permission={permission} scanState={scanState} selectedAlbum={selectedAlbum} albums={albums} albumPickerVisible={albumPickerVisible} scanMode={scanMode} onScanModeChange={setScanMode} onSelectLibrary={() => { setSource('Entire library'); setSelectedAlbum(null); setAlbumPickerVisible(false); }} onChooseFolder={() => void chooseFolder()} onSelectAlbum={(album) => { setSelectedAlbum(album); setSource('Choose a folder'); setAlbumPickerVisible(false); }} onRequestPermission={() => void requestMediaPermission()} onStartScan={() => void startScan()} />
     : screen === 'results'
-      ? <ResultsScreen tab={tab} scanState={scanState} scanProgress={scanProgress} scanError={scanError} scanSummary={scanSummary} selectedAlbum={selectedAlbum} selectedLarge={selectedLarge} largeVideos={largeVideos} duplicateGroups={duplicateGroups} onTabChange={setTab} onToggleLarge={(id) => setSelectedLarge((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onSelectAll={() => setSelectedLarge(selectedLarge.length === largeVideos.length ? [] : largeVideos.map((item) => item.id))} onRetry={() => void startScan()} onBack={() => setScreen('home')} onContinue={() => setScreen('cleanup')} onDeleteDuplicateGroup={deleteDuplicateGroup} onDeleteAllDuplicateGroups={deleteAllDuplicateGroups} />
+      ? <ResultsScreen tab={tab} scanState={scanState} scanProgress={scanProgress} scanError={scanError} scanSummary={scanSummary} estimatedSavings={estimatedSavings} selectedAlbum={selectedAlbum} selectedLarge={selectedLarge} largeVideos={largeVideos} duplicateGroups={duplicateGroups} onTabChange={setTab} onToggleLarge={(id) => setSelectedLarge((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onSelectAll={() => setSelectedLarge(selectedLarge.length === largeVideos.length ? [] : largeVideos.map((item) => item.id))} onRetry={() => void startScan()} onBack={() => setScreen('home')} onContinue={() => setScreen('cleanup')} onDeleteDuplicateGroup={deleteDuplicateGroup} onDeleteAllDuplicateGroups={deleteAllDuplicateGroups} />
       : screen === 'cleanup'
         ? <CleanupScreen largeVideos={largeVideos} selectedLarge={selectedLarge} selectedSavings={selectedSavings} keepOriginals={keepOriginals} onBack={() => setScreen('results')} onKeepOriginalsChange={setKeepOriginals} onDone={() => setScreen('done')} />
         : <DoneScreen selectedSavings={selectedSavings} duplicateStorageSaved={duplicateStorageSaved} onHome={() => setScreen('home')} />;

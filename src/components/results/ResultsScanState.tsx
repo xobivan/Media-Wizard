@@ -9,6 +9,9 @@ export function ResultsScanState({ progress, album }: { progress: number; album:
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${progress}%` }]} /></View>
         <Text style={styles.scanDetail}>Reading media metadata from {album?.title ?? 'your library'}</Text>
+        <Text style={styles.scanExplanation}>
+          Large libraries and large videos can take extra time while MediaWizard verifies file contents. You can leave this screen open while the scan continues.
+        </Text>
     </View>
   );
 }

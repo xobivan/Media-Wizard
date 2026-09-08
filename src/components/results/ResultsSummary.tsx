@@ -5,9 +5,11 @@ import { styles } from '../styles/mediaWizardStyles';
 export function ResultsSummary({
   summary,
   albumTitle,
+  estimatedSavings,
 }: {
   summary: ScanSummary;
   albumTitle?: string;
+  estimatedSavings: number;
 }) {
   return (
     <>
@@ -19,6 +21,7 @@ export function ResultsSummary({
         We found {summary.total} media items in{' '}
         {albumTitle ?? 'your library'}.
       </Text>
+      <Text style={styles.savingsEstimate}>Up to {formatBytes(estimatedSavings)} could be saved after cleaning.</Text>
 
       <View style={styles.statRow}>
         <Stat
@@ -38,6 +41,11 @@ export function ResultsSummary({
       </View>
     </>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
 function Stat({

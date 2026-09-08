@@ -28,6 +28,7 @@ export type ResultsScreenProps = {
   onContinue: () => void;
   onDeleteDuplicateGroup: (group: DuplicateGroup) => void;
   onDeleteAllDuplicateGroups: (groups: DuplicateGroup[]) => void;
+  estimatedSavings: number;
 };
 
 export function ResultsScreen(props: ResultsScreenProps) {
@@ -39,7 +40,7 @@ export function ResultsScreen(props: ResultsScreenProps) {
         <ResultsHeader scanState={scanState} scanProgress={props.scanProgress} onBack={props.onBack} />
         {scanState === 'scanning' ? <ResultsScanState progress={props.scanProgress} album={props.selectedAlbum} /> : null}
         {scanState === 'error' ? <ResultsErrorState error={props.scanError} onRetry={props.onRetry} /> : null}
-        {scanState !== 'scanning' && scanState !== 'error' ? <><ResultsSummary summary={props.scanSummary} albumTitle={props.selectedAlbum?.title} />
+        {scanState !== 'scanning' && scanState !== 'error' ? <><ResultsSummary summary={props.scanSummary} albumTitle={props.selectedAlbum?.title} estimatedSavings={props.estimatedSavings} />
         <ResultsTabs value={props.tab} onChange={props.onTabChange} />
         <ResultsSections tab={props.tab} duplicateGroups={props.duplicateGroups} largeVideos={props.largeVideos} selectedLarge={props.selectedLarge} onToggleLarge={props.onToggleLarge} onSelectAll={props.onSelectAll} onContinue={props.onContinue} onDeleteDuplicateGroup={props.onDeleteDuplicateGroup} onDeleteAllDuplicateGroups={props.onDeleteAllDuplicateGroups} /></> : null}
       </ScrollView>
