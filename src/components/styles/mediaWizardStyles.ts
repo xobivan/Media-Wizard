@@ -113,6 +113,8 @@ export const styles = StyleSheet.create({
   progressFill: { height: '100%', backgroundColor: '#B8CA55' },
   scanDetail: { color: '#8B9992', fontSize: 12, marginTop: 10 },
   scanExplanation: { color: '#71807B', fontSize: 12, lineHeight: 18, marginTop: 12 },
+  abortButton: { alignItems: 'center', marginTop: 18, padding: 10 },
+  abortButtonText: { color: '#9F4E40', fontSize: 13, fontWeight: '700' },
   resultHeadline: { color: '#183C38', fontSize: 27, fontWeight: '700', letterSpacing: -0.7 },
   resultCopy: { color: '#71807B', lineHeight: 21, fontSize: 14, marginTop: 8 },
   savingsEstimate: { color: '#718C33', fontSize: 13, fontWeight: '700', marginTop: 12 },

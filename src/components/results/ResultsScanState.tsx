@@ -2,7 +2,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { Album } from '../types/mediaWizardTypes';
 import { styles } from '../styles/mediaWizardStyles';
 
-export function ResultsScanState({ progress, album }: { progress: number; album: Album | null }) {
+export function ResultsScanState({ progress, album, onAbort }: { progress: number; album: Album | null; onAbort: () => void }) {
   return (
     <View style={styles.scanBox}>
       <Text style={styles.scanTitle}>Looking through your library…</Text>
@@ -12,6 +12,9 @@ export function ResultsScanState({ progress, album }: { progress: number; album:
         <Text style={styles.scanExplanation}>
           Large libraries and large videos can take extra time while MediaWizard verifies file contents. You can leave this screen open while the scan continues.
         </Text>
+        <Pressable style={styles.abortButton} onPress={onAbort}>
+          <Text style={styles.abortButtonText}>Abort scan</Text>
+        </Pressable>
     </View>
   );
 }
