@@ -130,14 +130,21 @@ function LargeVideos({
         />
       ))}
 
-      <Pressable
-        style={styles.primaryButton}
-        onPress={onContinue}
-      >
-        <Text style={styles.primaryButtonText}>
-          Continue to cleanup →
-        </Text>
-      </Pressable>
+      {largeVideos.length > 0 ? (
+        <Pressable
+          style={styles.primaryButton}
+          onPress={onContinue}
+        >
+          <Text style={styles.primaryButtonText}>
+            Continue to cleanup →
+          </Text>
+        </Pressable>
+      ) : (
+        <View style={styles.noLargeFilesCard}>
+          <Text style={styles.noLargeFilesTitle}>No large videos found</Text>
+          <Text style={styles.noLargeFilesDetail}>There are no videos larger than 200 MB in this scan.</Text>
+        </View>
+      )}
     </>
   );
 }
