@@ -109,12 +109,14 @@ function LargeVideos({
         Large videos
       </Text>
 
-      <SelectAllRow
-        selectedCount={selectedLarge.length}
-        totalCount={largeVideos.length}
-        allSelected={allSelected}
-        onPress={onSelectAll}
-      />
+      {largeVideos.length > 0 ? (
+        <SelectAllRow
+          selectedCount={selectedLarge.length}
+          totalCount={largeVideos.length}
+          allSelected={allSelected}
+          onPress={onSelectAll}
+        />
+      ) : null}
 
       <Text style={styles.selectionHint}>
         Tap a video to select or deselect it
