@@ -101,7 +101,23 @@ function LargeVideos({
   onSelectAll,
   onContinue,
 }: SectionProps) {
-  const allSelected = largeVideos.length > 0 && selectedLarge.length === largeVideos.length;
+  const hasLargeVideos = largeVideos.length > 0;
+  const allSelected =
+    hasLargeVideos && selectedLarge.length === largeVideos.length;
+
+  if (!hasLargeVideos) {
+    return (
+      <View style={styles.noLargeFilesCard}>
+        <Text style={styles.noLargeFilesTitle}>
+          No large videos found
+        </Text>
+
+        <Text style={styles.noLargeFilesDetail}>
+          There are no videos larger than 200 MB in this scan.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -109,20 +125,18 @@ function LargeVideos({
         Large videos
       </Text>
 
-      {largeVideos.length > 0 ? (
-        <SelectAllRow
-          selectedCount={selectedLarge.length}
-          totalCount={largeVideos.length}
-          allSelected={allSelected}
-          onPress={onSelectAll}
-        />
-      ) : null}
+      <SelectAllRow
+        selectedCount={selectedLarge.length}
+        totalCount={largeVideos.length}
+        allSelected={allSelected}
+        onPress={onSelectAll}
+      />
 
       <Text style={styles.selectionHint}>
         Tap a video to select or deselect it
       </Text>
 
-      {largeVideos.length === 0 ? <Text style={styles.selectionHint}>No videos larger than 200 MB found.</Text> : largeVideos.map((item) => (
+      {largeVideos.map((item) => (
         <MediaCard
           key={item.id}
           item={item}
@@ -132,21 +146,14 @@ function LargeVideos({
         />
       ))}
 
-      {largeVideos.length > 0 ? (
-        <Pressable
-          style={styles.primaryButton}
-          onPress={onContinue}
-        >
-          <Text style={styles.primaryButtonText}>
-            Continue to cleanup →
-          </Text>
-        </Pressable>
-      ) : (
-        <View style={styles.noLargeFilesCard}>
-          <Text style={styles.noLargeFilesTitle}>No large videos found</Text>
-          <Text style={styles.noLargeFilesDetail}>There are no videos larger than 200 MB in this scan.</Text>
-        </View>
-      )}
+      <Pressable
+        style={styles.primaryButton}
+        onPress={onContinue}
+      >
+        <Text style={styles.primaryButtonText}>
+          Continue to cleanup
+        </Text>
+      </Pressable>
     </>
   );
 }
