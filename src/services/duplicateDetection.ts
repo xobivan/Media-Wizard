@@ -41,10 +41,9 @@ export async function findDuplicateGroups(
   const candidates = [...candidatesByMetadata.values()].filter((group) => group.length > 1).flat();
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
-    const contents = candidate.asset.mediaType === 'photo'
-      ? await getPhotoFingerprintInput(candidate.asset)
-      : await getMediaFile(candidate.asset).then((file) => file.base64());
-    const fingerprint = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, contents);
+    const fingerprint = candidate.asset.mediaType === 'photo'
+      ? await getPhotoFingerprint(candidate.asset)
+      : await getStreamingFileFingerprint(candidate.asset);
     const duplicateAsset: DuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size };
     const group = groups.get(fingerprint) ?? [];
     group.push(duplicateAsset);
@@ -52,17 +51,17 @@ export async function findDuplicateGroups(
     onProgress?.(50 + Math.round(((index + 1) / candidates.length) * 50));
   }
 
-  async function getPhotoFingerprintInput(asset: MediaLibrary.Asset): Promise<string> {
+  async function getPhotoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
     try {
-      return await normalizedPhotoBase64(asset);
+      return await normalizedPhotoFingerprint(asset);
     } catch {
       // Some Android media providers expose files that ImageManipulator cannot decode.
-      // Fall back to exact byte matching so one unsupported image does not fail the scan.
-      return getMediaFile(asset).then((file) => file.base64());
+      // Fall back to exact streaming hash matching so one unsupported image does not fail the scan.
+      return getStreamingFileFingerprint(asset);
     }
   }
 
-  async function normalizedPhotoBase64(asset: MediaLibrary.Asset): Promise<string> {
+  async function normalizedPhotoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
     const sourceFile = await getMediaFile(asset);
     const context = ImageManipulator.ImageManipulator.manipulate(sourceFile.uri);
     context.resize({ width: 64, height: 64 });
@@ -70,9 +69,21 @@ export async function findDuplicateGroups(
     const normalizedImage = await renderedImage.saveAsync({
       format: ImageManipulator.SaveFormat.PNG,
     });
-    const contents = await new File(normalizedImage.uri).base64();
-    new File(normalizedImage.uri).delete();
-    return contents;
+    const normalizedFile = new File(normalizedImage.uri);
+    const fingerprint = normalizedFile.md5 ?? (await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, await normalizedFile.base64()));
+    normalizedFile.delete();
+    return fingerprint;
+  }
+
+  async function getStreamingFileFingerprint(asset: MediaLibrary.Asset): Promise<string> {
+    try {
+      const file = await getMediaFile(asset);
+      const hash = file.md5;
+      if (hash) return hash;
+    } catch {
+      // Fall back if native md5 fails
+    }
+    return [asset.filename, asset.duration, asset.width, asset.height].join(':');
   }
 
   return [...groups.values()]

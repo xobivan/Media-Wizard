@@ -16,7 +16,8 @@
             "video"
           ]
         }
-      ]
+      ],
+      "react-native-compressor"
     ],
     "ios": {
       "supportsTablet": true
