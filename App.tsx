@@ -14,15 +14,16 @@ import { findLargeVideos } from './src/services/largeVideoDetection';
 import { getMediaFile, deleteMediaFileAsync } from './src/services/mediaAssetFile';
 import { compressVideo, type CompressionQuality, getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, type MediaPermissionStrategy } from './src/services/smartCompression';
 import { useMediaPermissions } from './src/hooks/useMediaPermissions';
+import { useAlbumSelection } from './src/hooks/useAlbumSelection';
 
 type Screen = 'home' | 'results' | 'cleanup' | 'done';
 class ScanAbortedError extends Error {}
 
 export default function App() {
   const { permission, mediaPermissionStrategy, requestMediaPermission } = useMediaPermissions();
+  const { source, albums, albumPickerVisible, selectedAlbum, chooseFolder, selectLibrary, selectAlbum } = useAlbumSelection();
   
   const [screen, setScreen] = useState<Screen>('home');
-  const [source, setSource] = useState('Entire library');
   const [tab, setTab] = useState<ResultTab>('Photos');
   const [largeVideos, setLargeVideos] = useState<LargeVideo[]>([]);
   const [selectedLarge, setSelectedLarge] = useState<string[]>([]);
@@ -30,9 +31,6 @@ export default function App() {
   const [scanProgress, setScanProgress] = useState(0);
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [scanError, setScanError] = useState<string | null>(null);
-  const [albums, setAlbums] = useState<MediaLibrary.Album[]>([]);
-  const [albumPickerVisible, setAlbumPickerVisible] = useState(false);
-  const [selectedAlbum, setSelectedAlbum] = useState<MediaLibrary.Album | null>(null);
   const [scanSummary, setScanSummary] = useState<ScanSummary>({ photos: 0, videos: 0, total: 0 });
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [duplicateStorageSaved, setDuplicateStorageSaved] = useState(0);
@@ -78,14 +76,6 @@ export default function App() {
     const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
     return () => subscription.remove();
   }, [screen, scanState]);
-
-
-  const chooseFolder = async () => {
-    setSource('Choose a folder');
-    const availableAlbums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
-    setAlbums(availableAlbums.filter((album) => album.assetCount > 0));
-    setAlbumPickerVisible(true);
-  };
 
   const startScan = async () => {
     scanCancelled.current = false;
@@ -388,7 +378,7 @@ export default function App() {
   };
 
   const content = screen === 'home'
-    ? <HomeScreen source={source} permission={permission} scanState={scanState} selectedAlbum={selectedAlbum} albums={albums} albumPickerVisible={albumPickerVisible} scanMode={scanMode} onScanModeChange={setScanMode} onSelectLibrary={() => { setSource('Entire library'); setSelectedAlbum(null); setAlbumPickerVisible(false); }} onChooseFolder={() => void chooseFolder()} onSelectAlbum={(album) => { setSelectedAlbum(album); setSource('Choose a folder'); setAlbumPickerVisible(false); }} onRequestPermission={() => void requestMediaPermission()} onStartScan={() => void startScan()} />
+    ? <HomeScreen source={source} permission={permission} scanState={scanState} selectedAlbum={selectedAlbum} albums={albums} albumPickerVisible={albumPickerVisible} scanMode={scanMode} onScanModeChange={setScanMode} onSelectLibrary={selectLibrary} onChooseFolder={chooseFolder} onSelectAlbum={selectAlbum} onRequestPermission={() => void requestMediaPermission()} onStartScan={() => void startScan()} />
     : screen === 'results'
       ? <ResultsScreen tab={tab} scanState={scanState} scanProgress={scanProgress} scanError={scanError} scanSummary={scanSummary} estimatedSavings={estimatedSavings} selectedAlbum={selectedAlbum} selectedLarge={selectedLarge} largeVideos={largeVideos} duplicateGroups={duplicateGroups} onTabChange={setTab} onToggleLarge={(id) => setSelectedLarge((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onSelectAll={() => setSelectedLarge(selectedLarge.length === largeVideos.length ? [] : largeVideos.map((item) => item.id))} onRetry={() => void startScan()} onBack={() => void (scanState === 'scanning' ? confirmAbortScan() : setScreen('home'))} onAbortScan={abortScan} onContinue={() => { setCompressionState('idle'); setCompressionProgress(0); setCompressionCurrent(0); setCompressionError(null); setScreen('cleanup'); }} onDeleteDuplicateGroup={deleteDuplicateGroup} onDeleteAllDuplicateGroups={deleteAllDuplicateGroups} />
       : screen === 'cleanup'
