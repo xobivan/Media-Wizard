@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { File } from 'expo-file-system';
+import { Platform } from 'react-native';
 import { getVideoMetaData, Video } from 'react-native-compressor';
 import type { LargeVideo } from '../components/types/mediaWizardTypes';
 
@@ -45,6 +46,33 @@ export type StorageStrategy = {
   estimatedTotalBytesNeeded: number;
   deleteImmediately: boolean;
 };
+
+export type MediaPermissionStrategy = 'manage_media' | 'manage_external_storage' | 'fallback';
+
+export async function getAndroidVersion(): Promise<number> {
+  try {
+    const { VERSION } = Platform.OS === 'android' ? require('react-native').Platform : { VERSION: 0 };
+    return VERSION || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function determineMediaPermissionStrategy(): MediaPermissionStrategy {
+  if (Platform.OS !== 'android') return 'fallback';
+  
+  // Android 13+ API level 33
+  const androidVersion = Platform.Version as number;
+  if (androidVersion >= 33) {
+    return 'manage_media';
+  }
+  // Android 10-12 API level 29-31
+  if (androidVersion >= 29) {
+    return 'manage_external_storage';
+  }
+  // Older versions - not supported
+  return 'fallback';
+}
 
 export async function getDeviceStorageInfo(): Promise<{ freeBytes: number; totalBytes: number }> {
   try {
