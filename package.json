@@ -10,8 +10,10 @@
     "expo-media-library": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.3",
+    "expo-video": "~57.0.3",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-compressor": "^2.0.3",
     "react-native-safe-area-context": "~5.7.0"
   },
   "devDependencies": {

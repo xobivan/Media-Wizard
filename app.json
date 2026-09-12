@@ -16,7 +16,9 @@
             "video"
           ]
         }
-      ]
+      ],
+      "react-native-compressor",
+      "expo-video"
     ],
     "ios": {
       "supportsTablet": true

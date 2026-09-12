@@ -1,6 +1,7 @@
 import * as MediaLibrary from 'expo-media-library/legacy';
 import type { LargeVideo } from '../components/types/mediaWizardTypes';
 import { getMediaFile } from './mediaAssetFile';
+import { estimatePlanFromAsset } from './smartCompression';
 
 export const LARGE_VIDEO_THRESHOLD = 200 * 1024 * 1024;
 
@@ -16,13 +17,16 @@ export async function findLargeVideos(
     const size = (await getMediaFile(asset)).size;
 
     if (typeof size === 'number' && size >= LARGE_VIDEO_THRESHOLD) {
+      const plan = estimatePlanFromAsset({ size, duration: asset.duration });
       largeVideos.push({
         id: asset.id,
         name: asset.filename,
         detail: `${formatBytes(size)} · ${formatDuration(asset.duration)}`,
-        savings: 0,
+        savings: Math.round(plan.estimatedSavingsBytes / (1024 * 1024)),
         size,
         duration: asset.duration,
+        estimatedOutputSize: plan.estimatedOutputBytes,
+        canCompress: !plan.shouldSkip,
       });
     }
 

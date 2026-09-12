@@ -42,8 +42,13 @@ export async function findDuplicateGroupsLegacy(
 
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
-    const contents = await getMediaFile(candidate.asset).then((file) => file.base64());
-    const fingerprint = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, contents);
+    let fingerprint: string;
+    try {
+      const file = await getMediaFile(candidate.asset);
+      fingerprint = file.md5 ?? [candidate.asset.filename, candidate.size, candidate.asset.duration, candidate.asset.width, candidate.asset.height].join(':');
+    } catch {
+      fingerprint = [candidate.asset.filename, candidate.size, candidate.asset.duration, candidate.asset.width, candidate.asset.height].join(':');
+    }
     const duplicateAsset: LegacyDuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size };
     const group = groups.get(fingerprint) ?? [];
     group.push(duplicateAsset);
