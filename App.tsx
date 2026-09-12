@@ -7,17 +7,20 @@ import { CleanupScreen } from './src/components/screens/CleanupScreen';
 import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
-import type { LargeVideo, PermissionState, ResultTab, ScanMode, ScanState, ScanSummary } from './src/components/types/mediaWizardTypes';
+import type { LargeVideo, ResultTab, ScanMode, ScanState, ScanSummary } from './src/components/types/mediaWizardTypes';
 import { findDuplicateGroups, type DuplicateGroup } from './src/services/duplicateDetection';
 import { findDuplicateGroupsLegacy } from './src/services/duplicateDetectionLegacy';
 import { findLargeVideos } from './src/services/largeVideoDetection';
 import { getMediaFile, deleteMediaFileAsync } from './src/services/mediaAssetFile';
-import { compressVideo, type CompressionQuality, getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, determineMediaPermissionStrategy, type MediaPermissionStrategy } from './src/services/smartCompression';
+import { compressVideo, type CompressionQuality, getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, type MediaPermissionStrategy } from './src/services/smartCompression';
+import { useMediaPermissions } from './src/hooks/useMediaPermissions';
 
 type Screen = 'home' | 'results' | 'cleanup' | 'done';
 class ScanAbortedError extends Error {}
 
 export default function App() {
+  const { permission, mediaPermissionStrategy, requestMediaPermission } = useMediaPermissions();
+  
   const [screen, setScreen] = useState<Screen>('home');
   const [source, setSource] = useState('Entire library');
   const [tab, setTab] = useState<ResultTab>('Photos');
@@ -25,7 +28,6 @@ export default function App() {
   const [selectedLarge, setSelectedLarge] = useState<string[]>([]);
   const [keepOriginals, setKeepOriginals] = useState(true);
   const [scanProgress, setScanProgress] = useState(0);
-  const [permission, setPermission] = useState<PermissionState>('checking');
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [scanError, setScanError] = useState<string | null>(null);
   const [albums, setAlbums] = useState<MediaLibrary.Album[]>([]);
@@ -43,7 +45,6 @@ export default function App() {
   const [compressionStorageSaved, setCompressionStorageSaved] = useState(0);
   const [compressionQuality, setCompressionQuality] = useState<CompressionQuality>('balanced');
   const [storageStrategy, setStorageStrategy] = useState<StorageStrategy | null>(null);
-  const [mediaPermissionStrategy, setMediaPermissionStrategy] = useState<MediaPermissionStrategy>('fallback');
   const compressionSignal = useRef({ cancelled: false });
   const scanCancelled = useRef(false);
 
@@ -78,36 +79,6 @@ export default function App() {
     return () => subscription.remove();
   }, [screen, scanState]);
 
-  useEffect(() => {
-    let mounted = true;
-    const loadPermission = async () => {
-      const response = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
-      if (!mounted) return;
-      setPermission(response.status === 'granted' ? response.accessPrivileges === 'limited' ? 'limited' : 'granted' : 'denied');
-      
-      // Determine and request media deletion permission strategy
-      const strategy = determineMediaPermissionStrategy();
-      setMediaPermissionStrategy(strategy);
-      
-      if (strategy === 'manage_media' || strategy === 'manage_external_storage') {
-        // Request the appropriate permission for seamless deletion
-        try {
-          await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
-        } catch (error) {
-          console.warn('Failed to request media permission:', error);
-        }
-      }
-    };
-    void loadPermission();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const requestMediaPermission = async () => {
-    const response = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
-    setPermission(response.status === 'granted' ? response.accessPrivileges === 'limited' ? 'limited' : 'granted' : 'denied');
-  };
 
   const chooseFolder = async () => {
     setSource('Choose a folder');
