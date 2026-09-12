@@ -10,3 +10,18 @@ export async function getMediaFile(asset: MediaLibrary.Asset): Promise<File> {
   const info = await MediaLibrary.getAssetInfoAsync(asset, { shouldDownloadFromNetwork: false });
   return new File(info.localUri ?? asset.uri);
 }
+
+export async function deleteMediaFileAsync(asset: MediaLibrary.Asset): Promise<void> {
+  try {
+    // Try direct file deletion first (respects storage permissions on Android 10+/13+)
+    const file = await getMediaFile(asset);
+    file.delete();
+  } catch (fileError) {
+    // Fall back to MediaLibrary deletion if file deletion fails
+    try {
+      await MediaLibrary.deleteAssetsAsync([asset.id]);
+    } catch (libraryError) {
+      throw libraryError;
+    }
+  }
+}

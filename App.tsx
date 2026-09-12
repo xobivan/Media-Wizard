@@ -11,8 +11,8 @@ import type { LargeVideo, PermissionState, ResultTab, ScanMode, ScanState, ScanS
 import { findDuplicateGroups, type DuplicateGroup } from './src/services/duplicateDetection';
 import { findDuplicateGroupsLegacy } from './src/services/duplicateDetectionLegacy';
 import { findLargeVideos } from './src/services/largeVideoDetection';
-import { getMediaFile } from './src/services/mediaAssetFile';
-import { compressVideo, type CompressionQuality, getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy } from './src/services/smartCompression';
+import { getMediaFile, deleteMediaFileAsync } from './src/services/mediaAssetFile';
+import { compressVideo, type CompressionQuality, getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, determineMediaPermissionStrategy, type MediaPermissionStrategy } from './src/services/smartCompression';
 
 type Screen = 'home' | 'results' | 'cleanup' | 'done';
 class ScanAbortedError extends Error {}
@@ -43,6 +43,7 @@ export default function App() {
   const [compressionStorageSaved, setCompressionStorageSaved] = useState(0);
   const [compressionQuality, setCompressionQuality] = useState<CompressionQuality>('balanced');
   const [storageStrategy, setStorageStrategy] = useState<StorageStrategy | null>(null);
+  const [mediaPermissionStrategy, setMediaPermissionStrategy] = useState<MediaPermissionStrategy>('fallback');
   const compressionSignal = useRef({ cancelled: false });
   const scanCancelled = useRef(false);
 
@@ -83,6 +84,19 @@ export default function App() {
       const response = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
       if (!mounted) return;
       setPermission(response.status === 'granted' ? response.accessPrivileges === 'limited' ? 'limited' : 'granted' : 'denied');
+      
+      // Determine and request media deletion permission strategy
+      const strategy = determineMediaPermissionStrategy();
+      setMediaPermissionStrategy(strategy);
+      
+      if (strategy === 'manage_media' || strategy === 'manage_external_storage') {
+        // Request the appropriate permission for seamless deletion
+        try {
+          await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+        } catch (error) {
+          console.warn('Failed to request media permission:', error);
+        }
+      }
     };
     void loadPermission();
     return () => {
@@ -256,7 +270,7 @@ export default function App() {
         // Handle original deletion based on storage strategy
         if (deleteOriginals) {
           if (deleteImmediately) {
-            // Delete immediately to free up space
+            // Delete immediately to free up space (multiple dialogs but ensures space)
             try {
               await MediaLibrary.deleteAssetsAsync([asset.id]);
               successfullyDeletedAssetIds.push(asset.id);
@@ -269,7 +283,7 @@ export default function App() {
               }
             }
           } else {
-            // Collect for batch deletion at end (single permission dialog)
+            // Collect for batch deletion at end (ONE permission dialog)
             assetsToDelete.push(asset.id);
           }
         }
@@ -282,7 +296,7 @@ export default function App() {
     }
 
     // After all compressions, delete remaining originals in batch (if strategy says so)
-    if (!deleteImmediately && assetsToDelete.length > 0 && !compressionSignal.current.cancelled) {
+    if (!deleteImmediately && assetsToDelete.length > 0 && !compressionSignal.current.cancelled && deleteOriginals) {
       try {
         await MediaLibrary.deleteAssetsAsync(assetsToDelete);
         successfullyDeletedAssetIds.push(...assetsToDelete);
