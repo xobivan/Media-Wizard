@@ -8,9 +8,7 @@ import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
 import type { LargeVideo, ResultTab, ScanMode, ScanState, ScanSummary } from './src/components/types/mediaWizardTypes';
-import { findDuplicateGroups, type DuplicateGroup } from './src/services/duplicateDetection';
-import { findDuplicateGroupsLegacy } from './src/services/duplicateDetectionLegacy';
-import { findLargeVideos } from './src/services/largeVideoDetection';
+import type { DuplicateGroup } from './src/services/duplicateDetection';
 import { getMediaFile, deleteMediaFileAsync } from './src/services/mediaAssetFile';
 import { compressVideo, type CompressionQuality, getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, type MediaPermissionStrategy } from './src/services/smartCompression';
 import { useMediaPermissions } from './src/hooks/useMediaPermissions';
@@ -19,13 +17,12 @@ import { useLargeVideoSelection } from './src/hooks/useLargeVideoSelection';
 import { useScanOperation } from './src/hooks/useScanOperation';
 
 type Screen = 'home' | 'results' | 'cleanup' | 'done';
-class ScanAbortedError extends Error {}
 
 export default function App() {
   const { permission, mediaPermissionStrategy, requestMediaPermission } = useMediaPermissions();
   const { source, albums, albumPickerVisible, selectedAlbum, chooseFolder, selectLibrary, selectAlbum } = useAlbumSelection();
   const { largeVideos, selectedLarge, selectedSavings, toggleSelection, selectAll, setLargeVideos, setSelectedLarge } = useLargeVideoSelection();
-  const { scanState, scanError, scanProgress, scanMode, scannedAssets, scanSummary, duplicateGroups, duplicateStorageSaved, scanCancelled, abortScan, confirmAbortScan, removeDeletedAssetsFromSummary, setScanState, setScanError, setScanProgress, setScanMode, setScannedAssets, setScanSummary, setDuplicateGroups, setDuplicateStorageSaved } = useScanOperation();
+  const { scanState, scanError, scanProgress, scanMode, scannedAssets, scanSummary, duplicateGroups, duplicateStorageSaved, scanCancelled, startScan: hookStartScan, abortScan, confirmAbortScan, removeDeletedAssetsFromSummary, setScanState, setScanError, setScanProgress, setScanMode, setScannedAssets, setScanSummary, setDuplicateGroups, setDuplicateStorageSaved } = useScanOperation();
   
   const [screen, setScreen] = useState<Screen>('home');
   const [tab, setTab] = useState<ResultTab>('Photos');
@@ -71,59 +68,15 @@ export default function App() {
   }, [screen, scanState]);
 
   const startScan = async () => {
-    scanCancelled.current = false;
-    setScanError(null);
-    setScanState('scanning');
-    setScanProgress(0);
-    setDuplicateGroups([]);
-    setLargeVideos([]);
-    setSelectedLarge([]);
-    setScannedAssets([]);
-    setDuplicateStorageSaved(0);
-    resetCompressionState();
-    setScreen('results');
-    try {
-      let after: string | undefined;
-      let photos = 0;
-      let videos = 0;
-      let total = 0;
-      const assets: MediaLibrary.Asset[] = [];
-      let hasNextPage = true;
-      while (hasNextPage) {
-        if (scanCancelled.current) throw new ScanAbortedError();
-        const page = await MediaLibrary.getAssetsAsync({ first: 100, after, mediaType: ['photo', 'video'], album: selectedAlbum?.id });
-        if (scanCancelled.current) throw new ScanAbortedError();
-        photos += page.assets.filter((asset) => asset.mediaType === 'photo').length;
-        videos += page.assets.filter((asset) => asset.mediaType === 'video').length;
-        total += page.assets.length;
-        assets.push(...page.assets);
-        setScanProgress(page.totalCount > 0 ? Math.min(95, Math.round((total / page.totalCount) * 100)) : 95);
-        hasNextPage = page.hasNextPage;
-        after = page.endCursor;
-      }
-
-      const updateScanProgress = (progress: number) => {
-        if (scanCancelled.current) throw new ScanAbortedError();
-        setScanProgress(50 + Math.round(progress / 2));
-      };
-      const groups = scanMode === 'deep'
-        ? await findDuplicateGroups(assets, updateScanProgress)
-        : await findDuplicateGroupsLegacy(assets, updateScanProgress);
-      if (scanCancelled.current) throw new ScanAbortedError();
-      const detectedLargeVideos = await findLargeVideos(assets);
-      if (scanCancelled.current) throw new ScanAbortedError();
-      setDuplicateGroups(groups);
-      setLargeVideos(detectedLargeVideos);
-      setSelectedLarge(detectedLargeVideos.map((video) => video.id));
-      setScannedAssets(assets);
-      setScanSummary({ photos, videos, total });
-      setScanProgress(100);
-      setScanState('complete');
-    } catch (error) {
-      if (error instanceof ScanAbortedError) return;
-      setScanState('error');
-      setScanError(error instanceof Error ? error.message : 'The media library could not be scanned.');
-    }
+    await hookStartScan(
+      selectedAlbum,
+      () => {
+        resetCompressionState();
+        setScreen('results');
+      },
+      (videos) => setLargeVideos(videos),
+      (ids) => setSelectedLarge(ids),
+    );
   };
 
   const abortScanAndReset = () => {
