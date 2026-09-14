@@ -1,48 +1,52 @@
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { File } from 'expo-file-system';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, BackHandler } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { CleanupScreen } from './src/components/screens/CleanupScreen';
 import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
-import type { LargeVideo, ResultTab, ScanMode, ScanState, ScanSummary } from './src/components/types/mediaWizardTypes';
+import type {ResultTab} from './src/components/types/mediaWizardTypes';
 import type { DuplicateGroup } from './src/services/duplicateDetection';
-import { getMediaFile, deleteMediaFileAsync } from './src/services/mediaAssetFile';
-import { compressVideo, type CompressionQuality, getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, type MediaPermissionStrategy } from './src/services/smartCompression';
+import { getMediaFile } from './src/services/mediaAssetFile';
+import { compressVideo, type CompressionQuality, type StorageStrategy} from './src/services/smartCompression';
 import { useMediaPermissions } from './src/hooks/useMediaPermissions';
 import { useAlbumSelection } from './src/hooks/useAlbumSelection';
 import { useLargeVideoSelection } from './src/hooks/useLargeVideoSelection';
 import { useScanOperation } from './src/hooks/useScanOperation';
+import { useCompressionOperation } from './src/hooks/useCompressionOperation';
 
 type Screen = 'home' | 'results' | 'cleanup' | 'done';
 
 export default function App() {
-  const { permission, mediaPermissionStrategy, requestMediaPermission } = useMediaPermissions();
+  const { permission, requestMediaPermission } = useMediaPermissions();
   const { source, albums, albumPickerVisible, selectedAlbum, chooseFolder, selectLibrary, selectAlbum } = useAlbumSelection();
   const { largeVideos, selectedLarge, selectedSavings, toggleSelection, selectAll, setLargeVideos, setSelectedLarge } = useLargeVideoSelection();
-  const { scanState, scanError, scanProgress, scanMode, scannedAssets, scanSummary, duplicateGroups, duplicateStorageSaved, scanCancelled, startScan: hookStartScan, abortScan, confirmAbortScan, removeDeletedAssetsFromSummary, setScanState, setScanError, setScanProgress, setScanMode, setScannedAssets, setScanSummary, setDuplicateGroups, setDuplicateStorageSaved } = useScanOperation();
+  const { 
+    scanState, scanError, scanProgress, 
+    scanMode, scannedAssets, scanSummary, 
+    duplicateGroups, duplicateStorageSaved, 
+    startScan: hookStartScan, abortScan, 
+    confirmAbortScan, removeDeletedAssetsFromSummary, 
+    setScanMode, setScannedAssets, setScanSummary, 
+    setDuplicateGroups, setDuplicateStorageSaved 
+  } = useScanOperation();
+  const { 
+    compressionProgress, compressionCurrent, 
+    compressionState, compressionError, 
+    compressionStorageSaved, compressionQuality, 
+    storageStrategy, compressionSignal, 
+    resetCompressionState, cancelCompression, 
+    startCompression: hookStartCompression,
+    setCompressionProgress, setCompressionCurrent, 
+    setCompressionState, setCompressionError, 
+    setCompressionStorageSaved, setCompressionQuality 
+  } = useCompressionOperation();
   
   const [screen, setScreen] = useState<Screen>('home');
   const [tab, setTab] = useState<ResultTab>('Photos');
   const [keepOriginals, setKeepOriginals] = useState(true);
-  const [compressionProgress, setCompressionProgress] = useState(0);
-  const [compressionCurrent, setCompressionCurrent] = useState(0);
-  const [compressionState, setCompressionState] = useState<'idle' | 'compressing' | 'complete' | 'error'>('idle');
-  const [compressionError, setCompressionError] = useState<string | null>(null);
-  const [compressionStorageSaved, setCompressionStorageSaved] = useState(0);
-  const [compressionQuality, setCompressionQuality] = useState<CompressionQuality>('balanced');
-  const [storageStrategy, setStorageStrategy] = useState<StorageStrategy | null>(null);
-  const compressionSignal = useRef({ cancelled: false });
-
-  const resetCompressionState = () => {
-    setCompressionState('idle');
-    setCompressionProgress(0);
-    setCompressionCurrent(0);
-    setCompressionError(null);
-    setCompressionStorageSaved(0);
-  };
 
   useEffect(() => {
     const handleBackPress = () => {
@@ -90,43 +94,14 @@ export default function App() {
     confirmAbortScan(abortScanAndReset);
   };
 
-  const cancelCompression = () => {
-    compressionSignal.current.cancelled = true;
-  };
-
   const startCompression = async (quality: CompressionQuality, deleteOriginals: boolean) => {
-    // If user chose to delete originals, check storage and ask for confirmation
-    if (deleteOriginals) {
-      const selectedVideos = largeVideos.filter((video) => selectedLarge.includes(video.id));
-      
-      // Check available storage
-      const storageInfo = await getDeviceStorageInfo();
-      const strategy = determineStorageStrategy(selectedVideos, storageInfo.freeBytes, quality);
-      setStorageStrategy(strategy);
-
-      const strategyMessage = strategy.deleteImmediately
-        ? `⚠️ Low storage detected.\n\nYou must STAND BY YOUR PHONE while compression runs.\n\nEach video will trigger a permission dialog. You must press "Allow" for each one to free up space and continue.\n\nAvailable: ${(strategy.freeSpaceBytes / (1024 * 1024 * 1024)).toFixed(1)}GB\nEstimated needed: ${(strategy.estimatedTotalBytesNeeded / (1024 * 1024 * 1024)).toFixed(1)}GB\n\nTotal videos: ${selectedVideos.length}`
-        : `After all videos are compressed, the original files will be permanently deleted.\n\nYou will see ONE permission dialog from Android at the end. Press "Allow" once to delete all originals.\n\nYou can walk away - no interaction needed during compression.`;
-
-      return new Promise<void>((resolve) => {
-        Alert.alert(
-          'Delete original videos?',
-          strategyMessage,
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
-            { 
-              text: 'Delete originals', 
-              style: 'destructive', 
-              onPress: () => {
-                void performCompression(quality, deleteOriginals, strategy).then(() => resolve());
-              }
-            },
-          ]
-        );
-      });
-    } else {
-      return performCompression(quality, deleteOriginals, null);
-    }
+    const selectedVideos = largeVideos.filter((video) => selectedLarge.includes(video.id));
+    return hookStartCompression(
+      quality,
+      deleteOriginals,
+      selectedVideos,
+      (strategy) => performCompression(quality, deleteOriginals, strategy),
+    );
   };
 
   const performCompression = async (quality: CompressionQuality, deleteOriginals: boolean, strategy: StorageStrategy | null) => {
@@ -308,12 +283,75 @@ export default function App() {
   };
 
   const content = screen === 'home'
-    ? <HomeScreen source={source} permission={permission} scanState={scanState} selectedAlbum={selectedAlbum} albums={albums} albumPickerVisible={albumPickerVisible} scanMode={scanMode} onScanModeChange={setScanMode} onSelectLibrary={selectLibrary} onChooseFolder={chooseFolder} onSelectAlbum={selectAlbum} onRequestPermission={() => void requestMediaPermission()} onStartScan={() => void startScan()} />
+    ? <HomeScreen
+        source={source}
+        permission={permission}
+        scanState={scanState}
+        selectedAlbum={selectedAlbum}
+        albums={albums}
+        albumPickerVisible={albumPickerVisible}
+        scanMode={scanMode}
+        onScanModeChange={setScanMode}
+        onSelectLibrary={selectLibrary}
+        onChooseFolder={chooseFolder}
+        onSelectAlbum={selectAlbum}
+        onRequestPermission={() => void requestMediaPermission()}
+        onStartScan={() => void startScan()}
+      />
     : screen === 'results'
-      ? <ResultsScreen tab={tab} scanState={scanState} scanProgress={scanProgress} scanError={scanError} scanSummary={scanSummary} estimatedSavings={estimatedSavings} selectedAlbum={selectedAlbum} selectedLarge={selectedLarge} largeVideos={largeVideos} duplicateGroups={duplicateGroups} onTabChange={setTab} onToggleLarge={toggleSelection} onSelectAll={selectAll} onRetry={() => void startScan()} onBack={() => void (scanState === 'scanning' ? confirmScanAbort() : setScreen('home'))} onAbortScan={abortScanAndReset} onContinue={() => { setCompressionState('idle'); setCompressionProgress(0); setCompressionCurrent(0); setCompressionError(null); setScreen('cleanup'); }} onDeleteDuplicateGroup={deleteDuplicateGroup} onDeleteAllDuplicateGroups={deleteAllDuplicateGroups} />
+      ? <ResultsScreen
+          tab={tab}
+          scanState={scanState}
+          scanProgress={scanProgress}
+          scanError={scanError}
+          scanSummary={scanSummary}
+          estimatedSavings={estimatedSavings}
+          selectedAlbum={selectedAlbum}
+          selectedLarge={selectedLarge}
+          largeVideos={largeVideos}
+          duplicateGroups={duplicateGroups}
+          onTabChange={setTab}
+          onToggleLarge={toggleSelection}
+          onSelectAll={selectAll}
+          onRetry={() => void startScan()}
+          onBack={() => void (scanState === 'scanning' ? confirmScanAbort() : setScreen('home'))}
+          onAbortScan={abortScanAndReset}
+          onContinue={() => {
+            setCompressionState('idle');
+            setCompressionProgress(0);
+            setCompressionCurrent(0);
+            setCompressionError(null);
+            setScreen('cleanup');
+          }}
+          onDeleteDuplicateGroup={deleteDuplicateGroup}
+          onDeleteAllDuplicateGroups={deleteAllDuplicateGroups}
+        />
       : screen === 'cleanup'
-        ? <CleanupScreen largeVideos={largeVideos} selectedLarge={selectedLarge} selectedSavings={selectedSavings} keepOriginals={keepOriginals} compressionQuality={compressionQuality} compressionProgress={compressionProgress} compressionCurrent={compressionCurrent} compressionState={compressionState} compressionError={compressionError} onBack={() => setScreen('results')} onKeepOriginalsChange={setKeepOriginals} onCompressionQualityChange={setCompressionQuality} onCancelCompression={cancelCompression} onStartCompression={() => void startCompression(compressionQuality, !keepOriginals)} onDone={() => setScreen('done')} />
-        : <DoneScreen selectedSavings={compressionStorageSaved / (1024 * 1024)} duplicateStorageSaved={duplicateStorageSaved} onHome={() => { resetCompressionState(); setScreen('home'); }} />;
+        ? <CleanupScreen
+            largeVideos={largeVideos}
+            selectedLarge={selectedLarge}
+            selectedSavings={selectedSavings}
+            keepOriginals={keepOriginals}
+            compressionQuality={compressionQuality}
+            compressionProgress={compressionProgress}
+            compressionCurrent={compressionCurrent}
+            compressionState={compressionState}
+            compressionError={compressionError}
+            onBack={() => setScreen('results')}
+            onKeepOriginalsChange={setKeepOriginals}
+            onCompressionQualityChange={setCompressionQuality}
+            onCancelCompression={cancelCompression}
+            onStartCompression={() => void startCompression(compressionQuality, !keepOriginals)}
+            onDone={() => setScreen('done')}
+          />
+        : <DoneScreen
+            selectedSavings={compressionStorageSaved / (1024 * 1024)}
+            duplicateStorageSaved={duplicateStorageSaved}
+            onHome={() => {
+              resetCompressionState();
+              setScreen('home');
+            }}
+          />;
 
   return <SafeAreaProvider>{content}</SafeAreaProvider>;
 }
