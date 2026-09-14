@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { BackHandler } from 'react-native';
+import { useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { CleanupScreen } from './src/components/screens/CleanupScreen';
 import { DoneScreen } from './src/components/screens/DoneScreen';
@@ -14,8 +13,7 @@ import { useLargeVideoSelection } from './src/hooks/useLargeVideoSelection';
 import { useScanOperation } from './src/hooks/useScanOperation';
 import { useCompressionOperation } from './src/hooks/useCompressionOperation';
 import { useDuplicateCleanup } from './src/hooks/useDuplicateCleanup';
-
-type Screen = 'home' | 'results' | 'cleanup' | 'done';
+import { useAppNavigation } from './src/hooks/useAppNavigation';
 
 export default function App() {
   const { permission, requestMediaPermission } = useMediaPermissions();
@@ -43,7 +41,6 @@ export default function App() {
     setCompressionStorageSaved, setCompressionQuality 
   } = useCompressionOperation();
   
-  const [screen, setScreen] = useState<Screen>('home');
   const [tab, setTab] = useState<ResultTab>('Photos');
   const [keepOriginals, setKeepOriginals] = useState(true);
   const { deleteDuplicateGroup, deleteAllDuplicateGroups } = useDuplicateCleanup({
@@ -52,35 +49,12 @@ export default function App() {
     onAssetsDeleted: removeDeletedAssetsFromSummary,
   });
 
-  useEffect(() => {
-    const handleBackPress = () => {
-      if (screen === 'results') {
-        if (scanState === 'scanning') confirmScanAbort();
-        else setScreen('home');
-        return true;
-      }
-
-      if (screen === 'cleanup') {
-        setScreen('results');
-        return true;
-      }
-      if (screen === 'done') {
-        resetCompressionState();
-        setScreen('home');
-        return true;
-      }
-      return false;
-    };
-    const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
-    return () => subscription.remove();
-  }, [screen, scanState]);
-
   const startScan = async () => {
     await hookStartScan(
       selectedAlbum,
       () => {
         resetCompressionState();
-        setScreen('results');
+        goResults();
       },
       (videos) => setLargeVideos(videos),
       (ids) => setSelectedLarge(ids),
@@ -90,13 +64,19 @@ export default function App() {
   const abortScanAndReset = () => {
     abortScan(() => {
       resetCompressionState();
-      setScreen('home');
+      goHome();
     });
   };
 
   const confirmScanAbort = () => {
     confirmAbortScan(abortScanAndReset);
   };
+
+  const { screen, goHome, goResults, goCleanup, goDone } = useAppNavigation({
+    scanState,
+    onConfirmScanAbort: confirmScanAbort,
+    onResetCompression: resetCompressionState,
+  });
 
   const startCompression = async (quality: CompressionQuality, deleteOriginals: boolean) => {
     const selectedVideos = largeVideos.filter((video) => selectedLarge.includes(video.id));
@@ -165,14 +145,14 @@ export default function App() {
           onToggleLarge={toggleSelection}
           onSelectAll={selectAll}
           onRetry={() => void startScan()}
-          onBack={() => void (scanState === 'scanning' ? confirmScanAbort() : setScreen('home'))}
+          onBack={() => void (scanState === 'scanning' ? confirmScanAbort() : goHome())}
           onAbortScan={abortScanAndReset}
           onContinue={() => {
             setCompressionState('idle');
             setCompressionProgress(0);
             setCompressionCurrent(0);
             setCompressionError(null);
-            setScreen('cleanup');
+            goCleanup();
           }}
           onDeleteDuplicateGroup={deleteDuplicateGroup}
           onDeleteAllDuplicateGroups={deleteAllDuplicateGroups}
@@ -188,19 +168,19 @@ export default function App() {
             compressionCurrent={compressionCurrent}
             compressionState={compressionState}
             compressionError={compressionError}
-            onBack={() => setScreen('results')}
+            onBack={goResults}
             onKeepOriginalsChange={setKeepOriginals}
             onCompressionQualityChange={setCompressionQuality}
             onCancelCompression={cancelCompression}
             onStartCompression={() => void startCompression(compressionQuality, !keepOriginals)}
-            onDone={() => setScreen('done')}
+            onDone={goDone}
           />
         : <DoneScreen
             selectedSavings={compressionStorageSaved / (1024 * 1024)}
             duplicateStorageSaved={duplicateStorageSaved}
             onHome={() => {
               resetCompressionState();
-              setScreen('home');
+              goHome();
             }}
           />;
 
