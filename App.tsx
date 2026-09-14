@@ -7,6 +7,7 @@ import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
 import type {ResultTab} from './src/components/types/mediaWizardTypes';
 import type { CompressionQuality, StorageStrategy} from './src/services/smartCompression';
+import { calculateEstimatedSavings } from './src/services/mediaSavings';
 import { useMediaPermissions } from './src/hooks/useMediaPermissions';
 import { useAlbumSelection } from './src/hooks/useAlbumSelection';
 import { useLargeVideoSelection } from './src/hooks/useLargeVideoSelection';
@@ -130,10 +131,7 @@ export default function App() {
   };
 
 
-  const estimatedSavings = duplicateGroups.reduce((total, group) => {
-    const original = group.assets.reduce((oldest, asset) => asset.creationTime < oldest.creationTime ? asset : oldest, group.assets[0]);
-    return total + group.assets.filter((asset) => asset.id !== original.id).reduce((sum, asset) => sum + asset.size, 0);
-  }, 0) + selectedSavings * 1024 * 1024;
+  const estimatedSavings = calculateEstimatedSavings(duplicateGroups, selectedSavings);
 
   const content = screen === 'home'
     ? <HomeScreen
