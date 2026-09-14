@@ -83,6 +83,7 @@ export function useCompressionOperation() {
     const failures: string[] = [];
     const assetsToDelete: string[] = [];
     const successfullyDeletedAssetIds: string[] = [];
+    let permissionDeniedCount = 0;
     const deleteImmediately = strategy?.deleteImmediately ?? false;
 
     // Single pass: Compress all videos
@@ -126,11 +127,8 @@ export function useCompressionOperation() {
               successfullyDeletedAssetIds.push(asset.id);
             } catch (deleteError) {
               const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
-              if (message.includes('Permission denied') || message.includes('permission')) {
-                failures.push(`${video.name}: Permission denied to delete original.`);
-              } else {
-                failures.push(`${video.name}: Failed to delete original - ${message}`);
-              }
+              permissionDeniedCount += 1;
+              console.warn(`Original deletion denied or failed for ${video.name}:`, message);
             }
           } else {
             assetsToDelete.push(asset.id);
@@ -151,16 +149,22 @@ export function useCompressionOperation() {
         successfullyDeletedAssetIds.push(...assetsToDelete);
       } catch (deleteError) {
         const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
-        if (message.includes('Permission denied') || message.includes('permission')) {
-          failures.push(`Permission denied to delete ${assetsToDelete.length} original file(s). Originals were not deleted.`);
-        } else {
-          failures.push(`Failed to delete ${assetsToDelete.length} original file(s): ${message}`);
-        }
+        permissionDeniedCount += assetsToDelete.length;
+        console.warn('Batch original deletion denied or failed:', message);
       }
     }
 
     if (successfullyDeletedAssetIds.length > 0) {
       onVideoDeleted(successfullyDeletedAssetIds);
+    }
+
+    if (permissionDeniedCount > 0 && !compressionSignal.current.cancelled) {
+      const videoWord = permissionDeniedCount === 1 ? 'video' : 'videos';
+      Alert.alert(
+        'Original Videos Kept',
+        `You denied permission to delete the original ${videoWord}. Both the original and compressed ${videoWord} have been kept on your device.`,
+        [{ text: 'OK' }]
+      );
     }
 
     setCompressionStorageSaved(savedBytes);
