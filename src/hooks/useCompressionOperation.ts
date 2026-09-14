@@ -1,7 +1,10 @@
 import { useRef, useState } from 'react';
 import { Alert } from 'react-native';
+import * as MediaLibrary from 'expo-media-library/legacy';
+import { File } from 'expo-file-system';
 import type { CompressionQuality } from '../services/smartCompression';
-import { getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy } from '../services/smartCompression';
+import { getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, compressVideo } from '../services/smartCompression';
+import { getMediaFile } from '../services/mediaAssetFile';
 
 export function useCompressionOperation() {
   const [compressionProgress, setCompressionProgress] = useState(0);
@@ -62,6 +65,121 @@ export function useCompressionOperation() {
     }
   };
 
+  const performCompression = async (
+    quality: CompressionQuality,
+    deleteOriginals: boolean,
+    strategy: StorageStrategy | null,
+    selectedVideos: any[],
+    scannedAssets: MediaLibrary.Asset[],
+    onVideoDeleted: (deletedAssetIds: string[]) => void,
+  ) => {
+    compressionSignal.current = { cancelled: false };
+    setCompressionState('compressing');
+    setCompressionError(null);
+    setCompressionProgress(0);
+    setCompressionCurrent(0);
+
+    let savedBytes = 0;
+    const failures: string[] = [];
+    const assetsToDelete: string[] = [];
+    const successfullyDeletedAssetIds: string[] = [];
+    const deleteImmediately = strategy?.deleteImmediately ?? false;
+
+    // Single pass: Compress all videos
+    for (let index = 0; index < selectedVideos.length; index += 1) {
+      if (compressionSignal.current.cancelled) break;
+
+      if (index > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+
+      const video = selectedVideos[index];
+      const asset = scannedAssets.find((candidate) => candidate.id === video.id);
+      if (!asset) {
+        failures.push(`${video.name}: source file is no longer available.`);
+        continue;
+      }
+      setCompressionCurrent(index + 1);
+      try {
+        const inputFile = await getMediaFile(asset);
+        const result = await compressVideo(inputFile.uri, video, quality, (progress) => {
+          setCompressionProgress(Math.round(((index + progress / 100) / selectedVideos.length) * 100));
+        }, compressionSignal.current);
+
+        try {
+          const savedAsset = await MediaLibrary.createAssetAsync(result.outputUri);
+          if (!savedAsset?.id) throw new Error('The compressed video was not saved to the media library.');
+        } catch (libraryError) {
+          throw new Error(`Failed to save compressed video: ${libraryError instanceof Error ? libraryError.message : 'unknown error'}`);
+        }
+
+        try {
+          new File(result.outputUri).delete();
+        } catch (deleteError) {
+          console.warn('Failed to delete temp compressed file:', deleteError);
+        }
+
+        if (deleteOriginals) {
+          if (deleteImmediately) {
+            try {
+              await MediaLibrary.deleteAssetsAsync([asset.id]);
+              successfullyDeletedAssetIds.push(asset.id);
+            } catch (deleteError) {
+              const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
+              if (message.includes('Permission denied') || message.includes('permission')) {
+                failures.push(`${video.name}: Permission denied to delete original.`);
+              } else {
+                failures.push(`${video.name}: Failed to delete original - ${message}`);
+              }
+            }
+          } else {
+            assetsToDelete.push(asset.id);
+          }
+        }
+
+        savedBytes += result.inputSizeBytes - result.outputSizeBytes;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'compression failed.';
+        failures.push(`${video.name}: ${errorMessage}`);
+      }
+    }
+
+    // After all compressions, delete remaining originals in batch
+    if (!deleteImmediately && assetsToDelete.length > 0 && !compressionSignal.current.cancelled && deleteOriginals) {
+      try {
+        await MediaLibrary.deleteAssetsAsync(assetsToDelete);
+        successfullyDeletedAssetIds.push(...assetsToDelete);
+      } catch (deleteError) {
+        const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
+        if (message.includes('Permission denied') || message.includes('permission')) {
+          failures.push(`Permission denied to delete ${assetsToDelete.length} original file(s). Originals were not deleted.`);
+        } else {
+          failures.push(`Failed to delete ${assetsToDelete.length} original file(s): ${message}`);
+        }
+      }
+    }
+
+    if (successfullyDeletedAssetIds.length > 0) {
+      onVideoDeleted(successfullyDeletedAssetIds);
+    }
+
+    setCompressionStorageSaved(savedBytes);
+    if (compressionSignal.current.cancelled) {
+      setCompressionProgress(0);
+      setCompressionState('idle');
+      setCompressionError('Compression cancelled. Compressed videos were saved but originals were not deleted.');
+      return;
+    }
+
+    setCompressionProgress(100);
+    if (failures.length > 0) {
+      setCompressionError(failures.join('\n'));
+      setCompressionState('error');
+    } else {
+      setCompressionState('complete');
+    }
+  };
+
   return {
     // State
     compressionProgress,
@@ -77,8 +195,9 @@ export function useCompressionOperation() {
     resetCompressionState,
     cancelCompression,
     startCompression,
+    performCompression,
 
-    // Setters (for performCompression to use)
+    // Setters
     setCompressionProgress,
     setCompressionCurrent,
     setCompressionState,

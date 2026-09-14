@@ -1,5 +1,4 @@
 import * as MediaLibrary from 'expo-media-library/legacy';
-import { File } from 'expo-file-system';
 import { useEffect, useState } from 'react';
 import { Alert, BackHandler } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -9,8 +8,7 @@ import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
 import type {ResultTab} from './src/components/types/mediaWizardTypes';
 import type { DuplicateGroup } from './src/services/duplicateDetection';
-import { getMediaFile } from './src/services/mediaAssetFile';
-import { compressVideo, type CompressionQuality, type StorageStrategy} from './src/services/smartCompression';
+import type { CompressionQuality, StorageStrategy} from './src/services/smartCompression';
 import { useMediaPermissions } from './src/hooks/useMediaPermissions';
 import { useAlbumSelection } from './src/hooks/useAlbumSelection';
 import { useLargeVideoSelection } from './src/hooks/useLargeVideoSelection';
@@ -39,6 +37,7 @@ export default function App() {
     storageStrategy, compressionSignal, 
     resetCompressionState, cancelCompression, 
     startCompression: hookStartCompression,
+    performCompression: hookPerformCompression,
     setCompressionProgress, setCompressionCurrent, 
     setCompressionState, setCompressionError, 
     setCompressionStorageSaved, setCompressionQuality 
@@ -105,123 +104,25 @@ export default function App() {
   };
 
   const performCompression = async (quality: CompressionQuality, deleteOriginals: boolean, strategy: StorageStrategy | null) => {
-    compressionSignal.current = { cancelled: false };
-    setCompressionState('compressing');
-    setCompressionError(null);
-    setCompressionProgress(0);
-    setCompressionCurrent(0);
     const selectedVideos = largeVideos.filter((video) => selectedLarge.includes(video.id));
-    let savedBytes = 0;
-    const failures: string[] = [];
-    const assetsToDelete: string[] = []; // For batch deletion (if storage sufficient)
-    const successfullyDeletedAssetIds: string[] = []; // Track what was deleted
-    const deleteImmediately = strategy?.deleteImmediately ?? false;
-
-    // Single pass: Compress all videos
-    for (let index = 0; index < selectedVideos.length; index += 1) {
-      if (compressionSignal.current.cancelled) break;
-      
-      // Add delay between compressions to allow system cleanup and memory pressure to decrease
-      if (index > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-      
-      const video = selectedVideos[index];
-      const asset = scannedAssets.find((candidate) => candidate.id === video.id);
-      if (!asset) {
-        failures.push(`${video.name}: source file is no longer available.`);
-        continue;
-      }
-      setCompressionCurrent(index + 1);
-      try {
-        const inputFile = await getMediaFile(asset);
-        const result = await compressVideo(inputFile.uri, video, quality, (progress) => {
-          setCompressionProgress(Math.round(((index + progress / 100) / selectedVideos.length) * 100));
-        }, compressionSignal.current);
-        
-        try {
-          const savedAsset = await MediaLibrary.createAssetAsync(result.outputUri);
-          if (!savedAsset?.id) throw new Error('The compressed video was not saved to the media library.');
-        } catch (libraryError) {
-          throw new Error(`Failed to save compressed video: ${libraryError instanceof Error ? libraryError.message : 'unknown error'}`);
-        }
-        
-        try {
-          new File(result.outputUri).delete();
-        } catch (deleteError) {
-          // Log but don't fail - temp file cleanup is not critical
-          console.warn('Failed to delete temp compressed file:', deleteError);
-        }
-        
-        // Handle original deletion based on storage strategy
-        if (deleteOriginals) {
-          if (deleteImmediately) {
-            // Delete immediately to free up space (multiple dialogs but ensures space)
-            try {
-              await MediaLibrary.deleteAssetsAsync([asset.id]);
-              successfullyDeletedAssetIds.push(asset.id);
-            } catch (deleteError) {
-              const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
-              if (message.includes('Permission denied') || message.includes('permission')) {
-                failures.push(`${video.name}: Permission denied to delete original.`);
-              } else {
-                failures.push(`${video.name}: Failed to delete original - ${message}`);
-              }
-            }
-          } else {
-            // Collect for batch deletion at end (ONE permission dialog)
-            assetsToDelete.push(asset.id);
-          }
-        }
-        
-        savedBytes += result.inputSizeBytes - result.outputSizeBytes;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'compression failed.';
-        failures.push(`${video.name}: ${errorMessage}`);
-      }
-    }
-
-    // After all compressions, delete remaining originals in batch (if strategy says so)
-    if (!deleteImmediately && assetsToDelete.length > 0 && !compressionSignal.current.cancelled && deleteOriginals) {
-      try {
-        await MediaLibrary.deleteAssetsAsync(assetsToDelete);
-        successfullyDeletedAssetIds.push(...assetsToDelete);
-      } catch (deleteError) {
-        const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
-        // Only fail if user explicitly denied the permission
-        if (message.includes('Permission denied') || message.includes('permission')) {
-          failures.push(`Permission denied to delete ${assetsToDelete.length} original file(s). Originals were not deleted.`);
-        } else {
-          failures.push(`Failed to delete ${assetsToDelete.length} original file(s): ${message}`);
-        }
-      }
-    }
-
-    if (successfullyDeletedAssetIds.length > 0) {
-      setLargeVideos((current) => current.filter((v) => !successfullyDeletedAssetIds.includes(v.id)));
-      setSelectedLarge((current) => current.filter((id) => !successfullyDeletedAssetIds.includes(id)));
-      setScannedAssets((current) => current.filter((a) => !successfullyDeletedAssetIds.includes(a.id)));
-      setScanSummary((current) => ({
-        ...current,
-        videos: Math.max(0, current.videos - successfullyDeletedAssetIds.length),
-        total: Math.max(0, current.total - successfullyDeletedAssetIds.length),
-      }));
-    }
-
-    setCompressionStorageSaved(savedBytes);
-    if (compressionSignal.current.cancelled) {
-      setCompressionProgress(0);
-      setCompressionState('idle');
-      setCompressionError('Compression cancelled. Compressed videos were saved but originals were not deleted.');
-      return;
-    }
-    setCompressionProgress(100);
-    if (failures.length > 0) {
-      setCompressionError(failures.join('\n'));
-      setCompressionState('error');
-    } else {
-      setCompressionState('complete');
-    }
+    
+    await hookPerformCompression(
+      quality,
+      deleteOriginals,
+      strategy,
+      selectedVideos,
+      scannedAssets,
+      (deletedAssetIds) => {
+        setLargeVideos((current) => current.filter((v) => !deletedAssetIds.includes(v.id)));
+        setSelectedLarge((current) => current.filter((id) => !deletedAssetIds.includes(id)));
+        setScannedAssets((current) => current.filter((a) => !deletedAssetIds.includes(a.id)));
+        setScanSummary((current) => ({
+          ...current,
+          videos: Math.max(0, current.videos - deletedAssetIds.length),
+          total: Math.max(0, current.total - deletedAssetIds.length),
+        }));
+      },
+    );
   };
 
 
