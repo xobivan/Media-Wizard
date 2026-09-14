@@ -1,19 +1,18 @@
-import * as MediaLibrary from 'expo-media-library/legacy';
 import { useEffect, useState } from 'react';
-import { Alert, BackHandler } from 'react-native';
+import { BackHandler } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { CleanupScreen } from './src/components/screens/CleanupScreen';
 import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
 import type {ResultTab} from './src/components/types/mediaWizardTypes';
-import type { DuplicateGroup } from './src/services/duplicateDetection';
 import type { CompressionQuality, StorageStrategy} from './src/services/smartCompression';
 import { useMediaPermissions } from './src/hooks/useMediaPermissions';
 import { useAlbumSelection } from './src/hooks/useAlbumSelection';
 import { useLargeVideoSelection } from './src/hooks/useLargeVideoSelection';
 import { useScanOperation } from './src/hooks/useScanOperation';
 import { useCompressionOperation } from './src/hooks/useCompressionOperation';
+import { useDuplicateCleanup } from './src/hooks/useDuplicateCleanup';
 
 type Screen = 'home' | 'results' | 'cleanup' | 'done';
 
@@ -46,6 +45,11 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [tab, setTab] = useState<ResultTab>('Photos');
   const [keepOriginals, setKeepOriginals] = useState(true);
+  const { deleteDuplicateGroup, deleteAllDuplicateGroups } = useDuplicateCleanup({
+    onStorageSaved: (bytes) => setDuplicateStorageSaved((current) => current + bytes),
+    onGroupsDeleted: (groups) => setDuplicateGroups((current) => current.filter((candidate) => !groups.includes(candidate))),
+    onAssetsDeleted: removeDeletedAssetsFromSummary,
+  });
 
   useEffect(() => {
     const handleBackPress = () => {
@@ -131,58 +135,6 @@ export default function App() {
     return total + group.assets.filter((asset) => asset.id !== original.id).reduce((sum, asset) => sum + asset.size, 0);
   }, 0) + selectedSavings * 1024 * 1024;
 
-  const deleteDuplicateGroup = (group: DuplicateGroup) => {
-    const original = group.assets.reduce((oldest, asset) => asset.creationTime < oldest.creationTime ? asset : oldest, group.assets[0]);
-    const duplicates = group.assets.filter((asset) => asset.id !== original.id);
-    Alert.alert('Delete duplicates?', `Keep ${original.filename} and delete ${duplicates.length} duplicate${duplicates.length === 1 ? '' : 's'}.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void MediaLibrary.deleteAssetsAsync(duplicates.map((asset) => asset.id))
-            .then(() => {
-              const savedBytes = duplicates.reduce((total, asset) => total + asset.size, 0);
-              setDuplicateStorageSaved((current) => current + savedBytes);
-              setDuplicateGroups((current) => current.filter((candidate) => candidate !== group));
-              removeDeletedAssetsFromSummary(duplicates);
-              Alert.alert('Duplicates deleted', `${formatBytes(savedBytes)} of storage saved.`);
-            })
-            .catch((error: unknown) => {
-              Alert.alert('Could not delete duplicates', error instanceof Error ? error.message : 'The selected duplicates could not be deleted.');
-            });
-        },
-      },
-    ]);
-  };
-
-  const deleteAllDuplicateGroups = (groups: DuplicateGroup[]) => {
-    const duplicateAssets = groups.flatMap((group) => {
-      const original = group.assets.reduce((oldest, asset) => asset.creationTime < oldest.creationTime ? asset : oldest, group.assets[0]);
-      return group.assets.filter((asset) => asset.id !== original.id);
-    });
-    Alert.alert('Delete all duplicates?', `Keep one original in each group and delete ${duplicateAssets.length} duplicate${duplicateAssets.length === 1 ? '' : 's'}.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete all',
-        style: 'destructive',
-        onPress: () => {
-          void MediaLibrary.deleteAssetsAsync(duplicateAssets.map((asset) => asset.id))
-            .then(() => {
-              const savedBytes = duplicateAssets.reduce((total, asset) => total + asset.size, 0);
-              setDuplicateStorageSaved((current) => current + savedBytes);
-              setDuplicateGroups((current) => current.filter((candidate) => !groups.includes(candidate)));
-              removeDeletedAssetsFromSummary(duplicateAssets);
-              Alert.alert('Duplicates deleted', `${formatBytes(savedBytes)} of storage saved.`);
-            })
-            .catch((error: unknown) => {
-              Alert.alert('Could not delete duplicates', error instanceof Error ? error.message : 'The selected duplicates could not be deleted.');
-            });
-        },
-      },
-    ]);
-  };
-
   const content = screen === 'home'
     ? <HomeScreen
         source={source}
@@ -255,9 +207,4 @@ export default function App() {
           />;
 
   return <SafeAreaProvider>{content}</SafeAreaProvider>;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
