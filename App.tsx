@@ -32,13 +32,12 @@ export default function App() {
     compressionProgress, compressionCurrent, 
     compressionState, compressionError, 
     compressionStorageSaved, compressionQuality, 
-    storageStrategy, compressionSignal, 
     resetCompressionState, cancelCompression, 
     startCompression: hookStartCompression,
     performCompression: hookPerformCompression,
     setCompressionProgress, setCompressionCurrent, 
     setCompressionState, setCompressionError, 
-    setCompressionStorageSaved, setCompressionQuality 
+    setCompressionQuality 
   } = useCompressionOperation();
   
   const [tab, setTab] = useState<ResultTab>('Photos');
