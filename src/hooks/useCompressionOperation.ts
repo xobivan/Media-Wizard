@@ -24,6 +24,13 @@ export function useCompressionOperation() {
     setCompressionStorageSaved(0);
   };
 
+  const prepareCompression = () => {
+    setCompressionState('idle');
+    setCompressionProgress(0);
+    setCompressionCurrent(0);
+    setCompressionError(null);
+  };
+
   const cancelCompression = () => {
     compressionSignal.current.cancelled = true;
   };
@@ -197,6 +204,7 @@ export function useCompressionOperation() {
 
     // Functions
     resetCompressionState,
+    prepareCompression,
     cancelCompression,
     startCompression,
     performCompression,

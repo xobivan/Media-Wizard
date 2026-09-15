@@ -32,11 +32,9 @@ export default function App() {
     compressionProgress, compressionCurrent, 
     compressionState, compressionError, 
     compressionStorageSaved, compressionQuality, 
-    resetCompressionState, cancelCompression, 
+    resetCompressionState, prepareCompression, cancelCompression, 
     startCompression: hookStartCompression,
     performCompression: hookPerformCompression,
-    setCompressionProgress, setCompressionCurrent, 
-    setCompressionState, setCompressionError, 
     setCompressionQuality 
   } = useCompressionOperation();
   
@@ -147,10 +145,7 @@ export default function App() {
           onBack={() => void (scanState === 'scanning' ? confirmScanAbort() : goHome())}
           onAbortScan={abortScanAndReset}
           onContinue={() => {
-            setCompressionState('idle');
-            setCompressionProgress(0);
-            setCompressionCurrent(0);
-            setCompressionError(null);
+            prepareCompression();
             goCleanup();
           }}
           onDeleteDuplicateGroup={deleteDuplicateGroup}
