@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { File } from 'expo-file-system';
+import type { LargeVideo } from '../components/types/mediaWizardTypes';
 import type { CompressionQuality } from '../services/smartCompression';
 import { getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, compressVideo } from '../services/smartCompression';
 import { getMediaFile } from '../services/mediaAssetFile';
@@ -38,7 +39,7 @@ export function useCompressionOperation() {
   const startCompression = async (
     quality: CompressionQuality,
     deleteOriginals: boolean,
-    selectedLargeVideos: any[],
+    selectedLargeVideos: LargeVideo[],
     onCompressionConfirmed: (strategy: StorageStrategy | null) => Promise<void>,
   ) => {
     if (deleteOriginals) {
@@ -76,7 +77,7 @@ export function useCompressionOperation() {
     quality: CompressionQuality,
     deleteOriginals: boolean,
     strategy: StorageStrategy | null,
-    selectedVideos: any[],
+    selectedVideos: LargeVideo[],
     scannedAssets: MediaLibrary.Asset[],
     onVideoDeleted: (deletedAssetIds: string[]) => void,
   ) => {

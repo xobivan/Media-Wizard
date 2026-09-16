@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Alert } from 'react-native';
-import type { ScanMode, ScanState, ScanSummary } from '../components/types/mediaWizardTypes';
+import type { LargeVideo, ScanMode, ScanState, ScanSummary } from '../components/types/mediaWizardTypes';
 import type { DuplicateGroup } from '../services/duplicateDetection';
 import { findDuplicateGroups } from '../services/duplicateDetection';
 import { findDuplicateGroupsLegacy } from '../services/duplicateDetectionLegacy';
@@ -46,7 +46,7 @@ export function useScanOperation() {
   const startScan = async (
     selectedAlbum: MediaLibrary.Album | null,
     onScanStart: () => void,
-    onLargeVideosDetected: (videos: any[]) => void,
+    onLargeVideosDetected: (videos: LargeVideo[]) => void,
     onSelectedLargeUpdate: (ids: string[]) => void,
   ) => {
     scanCancelled.current = false;
