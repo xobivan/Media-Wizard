@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler } from 'react-native';
 import type { ScanState } from '../components/types/mediaWizardTypes';
 
@@ -16,11 +16,16 @@ export function useAppNavigation({
   onResetCompression,
 }: AppNavigationOptions) {
   const [screen, setScreen] = useState<Screen>('home');
+  const onConfirmScanAbortRef = useRef(onConfirmScanAbort);
+  const onResetCompressionRef = useRef(onResetCompression);
+
+  onConfirmScanAbortRef.current = onConfirmScanAbort;
+  onResetCompressionRef.current = onResetCompression;
 
   useEffect(() => {
     const handleBackPress = () => {
       if (screen === 'results') {
-        if (scanState === 'scanning') onConfirmScanAbort();
+        if (scanState === 'scanning') onConfirmScanAbortRef.current();
         else setScreen('home');
         return true;
       }
@@ -31,7 +36,7 @@ export function useAppNavigation({
       }
 
       if (screen === 'done') {
-        onResetCompression();
+        onResetCompressionRef.current();
         setScreen('home');
         return true;
       }
@@ -41,13 +46,18 @@ export function useAppNavigation({
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
     return () => subscription.remove();
-  }, [onConfirmScanAbort, onResetCompression, scanState, screen]);
+  }, [scanState, screen]);
+
+  const goHome = useCallback(() => setScreen('home'), []);
+  const goResults = useCallback(() => setScreen('results'), []);
+  const goCleanup = useCallback(() => setScreen('cleanup'), []);
+  const goDone = useCallback(() => setScreen('done'), []);
 
   return {
     screen,
-    goHome: () => setScreen('home'),
-    goResults: () => setScreen('results'),
-    goCleanup: () => setScreen('cleanup'),
-    goDone: () => setScreen('done'),
+    goHome,
+    goResults,
+    goCleanup,
+    goDone,
   };
 }
