@@ -5,6 +5,7 @@ import type { DuplicateGroup } from '../services/duplicateDetection';
 import { findDuplicateGroups } from '../services/duplicateDetection';
 import { findDuplicateGroupsLegacy } from '../services/duplicateDetectionLegacy';
 import { findLargeVideos } from '../services/largeVideoDetection';
+import { count, report, reset, timed } from '../services/scanProfiler';
 import * as MediaLibrary from 'expo-media-library/legacy';
 
 class ScanAbortedError extends Error {}
@@ -50,6 +51,7 @@ export function useScanOperation() {
     onSelectedLargeUpdate: (ids: string[]) => void,
   ) => {
     scanCancelled.current = false;
+    reset();
     setScanError(null);
     setScanState('scanning');
     setScanProgress(0);
@@ -66,31 +68,39 @@ export function useScanOperation() {
       const assets: MediaLibrary.Asset[] = [];
       let hasNextPage = true;
 
-      while (hasNextPage) {
-        if (scanCancelled.current) throw new ScanAbortedError();
-        const page = await MediaLibrary.getAssetsAsync({ first: 100, after, mediaType: ['photo', 'video'], album: selectedAlbum?.id });
-        if (scanCancelled.current) throw new ScanAbortedError();
-        photos += page.assets.filter((asset) => asset.mediaType === 'photo').length;
-        videos += page.assets.filter((asset) => asset.mediaType === 'video').length;
-        total += page.assets.length;
-        assets.push(...page.assets);
-        setScanProgress(page.totalCount > 0 ? Math.min(95, Math.round((total / page.totalCount) * 100)) : 95);
-        hasNextPage = page.hasNextPage;
-        after = page.endCursor;
-      }
+      await timed('scan.media-library-load.total', async () => {
+        while (hasNextPage) {
+          if (scanCancelled.current) throw new ScanAbortedError();
+          const page = await timed('scan.media-library-load.page', () => MediaLibrary.getAssetsAsync({ first: 100, after, mediaType: ['photo', 'video'], album: selectedAlbum?.id }));
+          if (scanCancelled.current) throw new ScanAbortedError();
+          photos += page.assets.filter((asset) => asset.mediaType === 'photo').length;
+          videos += page.assets.filter((asset) => asset.mediaType === 'video').length;
+          total += page.assets.length;
+          assets.push(...page.assets);
+          setScanProgress(page.totalCount > 0 ? Math.min(95, Math.round((total / page.totalCount) * 100)) : 95);
+          hasNextPage = page.hasNextPage;
+          after = page.endCursor;
+        }
+      });
 
       const updateScanProgress = (progress: number) => {
         if (scanCancelled.current) throw new ScanAbortedError();
         setScanProgress(50 + Math.round(progress / 2));
       };
 
+      count('scan.assets.total', assets.length);
+      count('scan.assets.photos', photos);
+      count('scan.assets.videos', videos);
+
       const groups = scanMode === 'deep'
-        ? await findDuplicateGroups(assets, updateScanProgress)
+        ? await timed('scan.deep-duplicate-detection.total', () => findDuplicateGroups(assets, updateScanProgress))
         : await findDuplicateGroupsLegacy(assets, updateScanProgress);
       if (scanCancelled.current) throw new ScanAbortedError();
 
-      const detectedLargeVideos = await findLargeVideos(assets);
+      const detectedLargeVideos = await timed('scan.large-video-detection.total', () => findLargeVideos(assets));
       if (scanCancelled.current) throw new ScanAbortedError();
+
+      if (scanMode === 'deep') report();
 
       setDuplicateGroups(groups);
       onLargeVideosDetected(detectedLargeVideos);

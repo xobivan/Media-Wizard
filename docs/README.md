@@ -27,6 +27,10 @@ This directory contains the technical documentation for MediaWizard.
   - Error and fallback behavior
   - Architectural boundaries
   - Important implementation constraints
+- [Deep Scan Optimization Handoff](./DEEP_SCAN_OPTIMIZATION_HANDOFF.md)
+  - Reviewed optimization proposal for Deep Scan
+  - Required baseline instrumentation before optimizing
+  - Priority order and guardrails for the next agent
 
 ## Application purpose
 
