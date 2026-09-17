@@ -47,16 +47,48 @@ export async function findDuplicateGroups(
   count('deep.candidates.photos', candidates.filter(({ asset }) => asset.mediaType === 'photo').length);
   count('deep.candidates.videos', candidates.filter(({ asset }) => asset.mediaType === 'video').length);
 
-  for (let index = 0; index < candidates.length; index += 1) {
-    const candidate = candidates[index];
-    const fingerprint = candidate.asset.mediaType === 'photo'
-      ? await timed('deep.photo-fingerprint.total', () => getPhotoFingerprint(candidate.asset))
-      : await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
+  // Photo fingerprinting is independent per-asset (its own ImageManipulator context and temp
+  // file), so up to PHOTO_FINGERPRINT_CONCURRENCY photos are rendered in parallel to cut wall
+  // time. Video fingerprinting stays serial: each video allocates a native decoder/player, and
+  // letting those overlap with in-flight photo work risks excessive memory/decoder pressure on
+  // low-end devices.
+  const PHOTO_FINGERPRINT_CONCURRENCY = 2;
+  let completed = 0;
+  const recordFingerprint = (candidate: Candidate, fingerprint: string) => {
     const duplicateAsset: DuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size };
     const group = groups.get(fingerprint) ?? [];
     group.push(duplicateAsset);
     groups.set(fingerprint, group);
-    onProgress?.(50 + Math.round(((index + 1) / candidates.length) * 50));
+    completed += 1;
+    onProgress?.(50 + Math.round((completed / candidates.length) * 50));
+  };
+
+  const inFlightPhotos = new Set<Promise<void>>();
+  try {
+    for (const candidate of candidates) {
+      if (candidate.asset.mediaType === 'video') {
+        // Drain any in-flight photo work first so videos never run concurrently with anything else.
+        if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
+        const fingerprint = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
+        recordFingerprint(candidate, fingerprint);
+        continue;
+      }
+
+      let tracked: Promise<void>;
+      tracked = (async () => {
+        const fingerprint = await timed('deep.photo-fingerprint.total', () => getPhotoFingerprint(candidate.asset));
+        recordFingerprint(candidate, fingerprint);
+      })().finally(() => inFlightPhotos.delete(tracked));
+      inFlightPhotos.add(tracked);
+
+      if (inFlightPhotos.size >= PHOTO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightPhotos);
+    }
+    if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
+  } catch (error) {
+    // Drain remaining in-flight work (ignoring further errors) before propagating the first
+    // failure, so cancellation/error handling doesn't leave unhandled promise rejections behind.
+    await Promise.allSettled(inFlightPhotos);
+    throw error;
   }
 
   async function getPhotoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
