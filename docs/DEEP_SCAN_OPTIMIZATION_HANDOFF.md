@@ -2,11 +2,47 @@
 
 ## Status
 
-**Nothing has been implemented yet.** This document hands off a reviewed
-optimization proposal plus concrete next steps. No code changes have been
-made to the scan pipeline. Do not skip straight to implementing
-optimizations — read "Required First Step" below before changing any
-matching/fingerprinting logic.
+Baseline profiling exists (see "Baseline results" below) and one change has
+since been implemented on top of it: bounded concurrency (2) for photo
+fingerprinting (idea #5). Everything else in the original proposal — the
+matching criteria, the fingerprint algorithm itself, and video fingerprinting
+(which remains serial) — is unchanged. Do not skip straight to implementing
+further optimizations from the table below without re-profiling first.
+
+## Baseline results (before photo-fingerprint concurrency)
+
+Measured on a 6,693-item library (Samsung S21):
+
+- Total Deep Scan time: 32m 42s.
+- `deep.photo-fingerprint.total`: 5,502 photos, 17m 26s total, ~190 ms
+  average each — the largest single bottleneck.
+- `deep.video-fingerprint.total`: 13m 57s total. Out of scope for this
+  change; not modified.
+
+## Implemented: bounded concurrency for photo fingerprinting
+
+[`duplicateDetection.ts`](../src/services/duplicateDetection.ts) now runs up
+to 2 photo fingerprint jobs (`getPhotoFingerprint`, i.e. resize → render →
+PNG save → hash → temp-file delete) concurrently instead of one at a time.
+Video fingerprinting (`getVideoFingerprint`) is unchanged and still runs
+strictly serially — the loop drains all in-flight photo work before starting
+a video job, so a video's native decoder/player never overlaps with
+concurrent photo rendering. Progress reporting, cancellation (via the
+`onProgress` callback throwing), the ImageManipulator-failure fallback to
+streaming file hashing, and temp-file cleanup are all preserved; each
+in-flight promise is drained (via `Promise.allSettled`) before an error or
+cancellation propagates, so no unhandled rejections are left behind.
+
+Grouping and the fingerprint algorithm itself are unchanged, so the set of
+duplicate groups produced for a fixed library is expected to be identical to
+before — only the wall-clock time and internal ordering of same-fingerprint
+group members can differ.
+
+**Re-run the same benchmark on the same library/device to confirm before/after
+`deep.photo-fingerprint.total` and total Deep Scan time, and to check for any
+memory/stability regression on low-end devices.** If concurrency 2 regresses
+stability or shows no material improvement, revert it and record the result
+here.
 
 ## Context
 
