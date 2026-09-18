@@ -49,10 +49,13 @@ export async function findDuplicateGroups(
 
   // Photo fingerprinting is independent per-asset (its own ImageManipulator context and temp
   // file), so up to PHOTO_FINGERPRINT_CONCURRENCY photos are rendered in parallel to cut wall
-  // time. Video fingerprinting stays serial: each video allocates a native decoder/player, and
-  // letting those overlap with in-flight photo work risks excessive memory/decoder pressure on
-  // low-end devices.
-  const PHOTO_FINGERPRINT_CONCURRENCY = 2;
+  // time. Video fingerprinting is similarly independent per-asset (its own player and temp
+  // files), so up to VIDEO_FINGERPRINT_CONCURRENCY videos are decoded in parallel too. Photo and
+  // video work never overlap with each other, though: each pool is fully drained before the
+  // other starts a new job, so we never combine in-flight image rendering with in-flight native
+  // video decoders, which keeps peak memory/decoder pressure bounded on low-end devices.
+  const PHOTO_FINGERPRINT_CONCURRENCY = 3;
+  const VIDEO_FINGERPRINT_CONCURRENCY = 2;
   let completed = 0;
   const recordFingerprint = (candidate: Candidate, fingerprint: string) => {
     const duplicateAsset: DuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size };
@@ -64,15 +67,26 @@ export async function findDuplicateGroups(
   };
 
   const inFlightPhotos = new Set<Promise<void>>();
+  const inFlightVideos = new Set<Promise<void>>();
   try {
     for (const candidate of candidates) {
       if (candidate.asset.mediaType === 'video') {
-        // Drain any in-flight photo work first so videos never run concurrently with anything else.
+        // Drain any in-flight photo work first so videos never run concurrently with photo rendering.
         if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
-        const fingerprint = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
-        recordFingerprint(candidate, fingerprint);
+
+        let tracked: Promise<void>;
+        tracked = (async () => {
+          const fingerprint = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
+          recordFingerprint(candidate, fingerprint);
+        })().finally(() => inFlightVideos.delete(tracked));
+        inFlightVideos.add(tracked);
+
+        if (inFlightVideos.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideos);
         continue;
       }
+
+      // Drain any in-flight video work first so photos never run concurrently with video decoding.
+      if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
 
       let tracked: Promise<void>;
       tracked = (async () => {
@@ -84,10 +98,12 @@ export async function findDuplicateGroups(
       if (inFlightPhotos.size >= PHOTO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightPhotos);
     }
     if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
+    if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
   } catch (error) {
     // Drain remaining in-flight work (ignoring further errors) before propagating the first
     // failure, so cancellation/error handling doesn't leave unhandled promise rejections behind.
     await Promise.allSettled(inFlightPhotos);
+    await Promise.allSettled(inFlightVideos);
     throw error;
   }
 

@@ -2,12 +2,13 @@
 
 ## Status
 
-Baseline profiling exists (see "Baseline results" below) and one change has
+Baseline profiling exists (see "Baseline results" below) and two changes have
 since been implemented on top of it: bounded concurrency (2) for photo
-fingerprinting (idea #5). Everything else in the original proposal — the
-matching criteria, the fingerprint algorithm itself, and video fingerprinting
-(which remains serial) — is unchanged. Do not skip straight to implementing
-further optimizations from the table below without re-profiling first.
+fingerprinting, and bounded concurrency (2) for video fingerprinting (both
+idea #5). Everything else in the original proposal — the matching criteria
+and the fingerprint algorithm itself — is unchanged. Do not skip straight to
+implementing further optimizations from the table below without re-profiling
+first.
 
 ## Baseline results (before photo-fingerprint concurrency)
 
@@ -24,25 +25,58 @@ Measured on a 6,693-item library (Samsung S21):
 [`duplicateDetection.ts`](../src/services/duplicateDetection.ts) now runs up
 to 2 photo fingerprint jobs (`getPhotoFingerprint`, i.e. resize → render →
 PNG save → hash → temp-file delete) concurrently instead of one at a time.
-Video fingerprinting (`getVideoFingerprint`) is unchanged and still runs
-strictly serially — the loop drains all in-flight photo work before starting
-a video job, so a video's native decoder/player never overlaps with
-concurrent photo rendering. Progress reporting, cancellation (via the
-`onProgress` callback throwing), the ImageManipulator-failure fallback to
-streaming file hashing, and temp-file cleanup are all preserved; each
-in-flight promise is drained (via `Promise.allSettled`) before an error or
-cancellation propagates, so no unhandled rejections are left behind.
+Progress reporting, cancellation (via the `onProgress` callback throwing),
+the ImageManipulator-failure fallback to streaming file hashing, and
+temp-file cleanup are all preserved; each in-flight promise is drained (via
+`Promise.allSettled`) before an error or cancellation propagates, so no
+unhandled rejections are left behind.
 
 Grouping and the fingerprint algorithm itself are unchanged, so the set of
 duplicate groups produced for a fixed library is expected to be identical to
 before — only the wall-clock time and internal ordering of same-fingerprint
 group members can differ.
 
+This change measured 25m 38s total Deep Scan time on the same S21 library
+(21.6% faster than the 32m 42s baseline above), with no observed stability
+regression. It is kept.
+
+## Baseline results (before video-fingerprint concurrency)
+
+Measured after the photo-fingerprint concurrency change above, on a
+331-candidate-video sample (Samsung S21):
+
+- Total video thumbnail-extraction time (`deep.video-fingerprint.total`):
+  14m 02s, ~2.55s average per candidate video, processed strictly serially.
+  This was the primary remaining Deep Scan bottleneck.
+
+## Implemented: bounded concurrency for video fingerprinting
+
+`duplicateDetection.ts` now runs up to 2 video fingerprint jobs
+(`getVideoFingerprint`, i.e. create player → extract 3 timestamps → normalize
+each frame to PNG → hash all frames → release player in `finally`)
+concurrently instead of one at a time, via its own `inFlightVideos` pool
+(`VIDEO_FINGERPRINT_CONCURRENCY = 2`), mirroring the existing photo pool.
+Photo and video work still never overlap with each other — each pool is
+fully drained before the other starts a new job — so peak memory/decoder
+pressure never combines in-flight image rendering with in-flight native
+video decoders. The fingerprint algorithm per video (three timestamps →
+per-frame PNG normalize → hash → player release in `finally`) is completely
+unchanged; only the number of videos whose independent decoders may be
+in-flight at once increased from 1 to 2. Progress reporting, cancellation,
+the streaming-hash fallback, and player cleanup on both success and failure
+paths are all preserved, including draining both pools via
+`Promise.allSettled` before an error propagates.
+
+Grouping and the fingerprint algorithm are unchanged, so the set of
+duplicate groups produced for a fixed library is expected to be identical to
+the serial-video implementation — only wall-clock time and internal ordering
+of same-fingerprint group members can differ.
+
 **Re-run the same benchmark on the same library/device to confirm before/after
-`deep.photo-fingerprint.total` and total Deep Scan time, and to check for any
-memory/stability regression on low-end devices.** If concurrency 2 regresses
-stability or shows no material improvement, revert it and record the result
-here.
+`deep.video-fingerprint.total` and total Deep Scan time, and to check for any
+memory/heat/stability regression on the S21.** If concurrency 2 regresses
+stability or shows no material improvement, revert `VIDEO_FINGERPRINT_CONCURRENCY`
+to 1 (restoring serial video processing) and record the result here.
 
 ## Context
 
