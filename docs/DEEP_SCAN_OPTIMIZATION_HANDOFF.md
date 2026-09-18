@@ -2,13 +2,19 @@
 
 ## Status
 
-Baseline profiling exists (see "Baseline results" below) and two changes have
-since been implemented on top of it: bounded concurrency (2) for photo
-fingerprinting, and bounded concurrency (2) for video fingerprinting (both
-idea #5). Everything else in the original proposal — the matching criteria
-and the fingerprint algorithm itself — is unchanged. Do not skip straight to
-implementing further optimizations from the table below without re-profiling
-first.
+Baseline profiling exists (see "Baseline results" below) and three changes
+have since been implemented on top of it: bounded concurrency (3) for photo
+fingerprinting, bounded concurrency (2) for video fingerprinting, and
+progressive video fingerprinting (first-frame prefilter before the middle/end
+frames). The matching criteria are unchanged.
+
+Total measured Deep Scan time on the S21 after these changes: **~11 minutes**,
+down from the original 32m 42s baseline. Photo decoding remains the dominant
+cost (5,505 candidate photos fully decoded at source resolution just to
+produce a 64×64 fingerprint).
+
+A persistent fingerprint cache was discussed but deprioritized: it only
+speeds up *subsequent* scans, not the first-scan target.
 
 ## Baseline results (before photo-fingerprint concurrency)
 
@@ -77,6 +83,92 @@ of same-fingerprint group members can differ.
 memory/heat/stability regression on the S21.** If concurrency 2 regresses
 stability or shows no material improvement, revert `VIDEO_FINGERPRINT_CONCURRENCY`
 to 1 (restoring serial video processing) and record the result here.
+
+## Baseline results (before progressive video fingerprinting)
+
+Measured after the concurrency changes above, still remaining as the
+primary Deep Scan bottleneck on a representative library:
+
+- 5,505 candidate photos each fully decoded at source resolution
+  (12–50 MP) by `expo-image-manipulator` before being resized down to 64×64.
+- 333 candidate videos, each having all 3 frames (start, middle, end)
+  extracted and hashed before it's known whether the video can match
+  anything at all.
+
+## Implemented: progressive video fingerprinting
+
+`duplicateDetection.ts` now fingerprints candidate videos in two passes
+instead of always extracting all 3 frames per video:
+
+1. **First-frame pass** (`getVideoFirstFrameFingerprint`): for every
+   candidate video, create a player, extract only the first timestamp
+   (`getVideoFrameTimes(asset)[0]`, always `0.1`s), normalize that one frame
+   to PNG, hash it, and release the player — same per-frame algorithm as
+   before (`hashVideoFrame`, shared with the full pass), just one frame
+   instead of three. Runs with the same `VIDEO_FINGERPRINT_CONCURRENCY = 2`
+   pool as before, still never overlapping with the photo pool.
+2. **Grouping**: videos are grouped by their first-frame fingerprint once
+   the first pass finishes for all of them.
+3. **Full pass** (`getVideoFingerprint`, unchanged): only videos whose
+   first-frame fingerprint collides with at least one other video's go
+   through the original, unmodified three-frame extraction (create player →
+   extract all 3 timestamps → normalize each to PNG → hash all frames →
+   release player in `finally`) to produce their final fingerprint. Videos
+   with a unique first frame skip this pass entirely and are recorded
+   directly using their first-frame fingerprint as the final fingerprint.
+
+This is safe because the final fingerprint is always
+`firstFrameHash:midFrameHash:endFrameHash` — two videos can only end up in
+the same final group if their first-frame hash already matches, so skipping
+the middle/end-frame extraction for videos with a unique first frame cannot
+change which videos get grouped together. `getVideoFrameTimes` (the
+time-selection logic) and `hashVideoFrame` (the per-frame normalize/hash
+logic) are shared, unchanged code between the two passes, so the first-frame
+hash computed in pass 1 is guaranteed to equal the first component of the
+full fingerprint computed in pass 2 for the same video.
+
+One known behavioral edge case: the original single-pass algorithm wrapped
+player creation *and* all 3 frame extractions in one try/catch, falling back
+to the streaming file hash on **any** failure among the three. The new
+first-frame pass only exercises the first timestamp, so a video whose
+middle/end-frame extraction would have failed (but whose first-frame
+extraction succeeds) may now get a real first-frame-only fingerprint instead
+of falling back to the streaming hash — a narrow case, expected to be rare,
+but one the baseline comparison below should watch for.
+
+Progress reporting, cancellation, the streaming-hash fallback, and player
+cleanup are all preserved: each video still contributes exactly one
+`recordFingerprint` call (either after pass 1, for a unique first frame, or
+after pass 3, for a collision), keeping the `completed / candidates.length`
+progress math identical to before. Both video pools drain via
+`Promise.allSettled` before an error propagates.
+
+**Before merging/relying on this change, verify on a representative
+library:**
+- Single-frame extraction produces the same first-frame hash as today's
+  three-frame extraction for the same video (i.e. `hashVideoFrame` applied
+  to the pass-1 thumbnail equals the first `:`-separated component of the
+  pass-3 fingerprint for videos that go through both passes).
+- The final duplicate groups match the pre-progressive baseline exactly for
+  a fixed library (accounting for the known edge case above).
+- `deep.video-fingerprint.total` (now only incurred by colliding videos) and
+  total Deep Scan time both improve versus the 25m 38s / 14m 02s baseline on
+  the S21.
+
+If duplicate groups diverge beyond the documented edge case, or there's no
+material improvement, revert to always running `getVideoFingerprint` for
+every video (i.e. remove the first-frame prefilter pass) and record the
+result here.
+
+## Baseline results (before native downsampled photo fingerprinting)
+
+Measured after the concurrency + progressive-video changes above:
+
+- Total Deep Scan time: ~11 minutes on the S21 (down from 32m 42s).
+- 5,505 candidate photos, each fully decoded at source resolution
+  (12–50 MP) by `expo-image-manipulator` before being resized down to 64×64
+  — the primary remaining bottleneck, since decode cost scales with source
+  resolution regardless of concurrency.
 
 ## Context
 
