@@ -101,12 +101,14 @@ photo : width : height
 For videos:
 
 ```text
-video : width : height : rounded duration
+video : reduced aspect ratio : rounded duration
 ```
 
-Unlike fast scan, file size is not part of the candidate key. This allows deep
-scan to compare differently encoded or resized files with matching dimensions
-and approximate duration.
+Unlike fast scan, file size is not part of the candidate key. Reducing an
+aspect ratio (for example, `1920:1080` and `1280:720` both become `16:9`)
+allows Deep Scan to compare differently encoded or resized videos that retain
+the same framing and approximate duration. The subsequent frame fingerprint
+verification remains unchanged.
 
 ## 5. Deep photo matching
 
