@@ -1,16 +1,21 @@
 import { Pressable, Text, View } from 'react-native';
-import type { ResultTab } from '../types/mediaWizardTypes';
+import type { ResultTab, ScanTarget } from '../types/mediaWizardTypes';
 import { styles } from '../styles/mediaWizardStyles';
-
-const tabs: ResultTab[] = ['Photos', 'Videos', 'Large files'];
 
 export function ResultsTabs({
   value,
   onChange,
+  scanTargets,
 }: {
   value: ResultTab;
   onChange: (tab: ResultTab) => void;
+  scanTargets: ScanTarget[];
 }) {
+  const tabs: ResultTab[] = [
+    ...(scanTargets.includes('photoDuplicates') ? ['Photos' as const] : []),
+    ...(scanTargets.includes('videoDuplicates') ? ['Videos' as const] : []),
+    ...(scanTargets.includes('largeVideos') ? ['Large files' as const] : []),
+  ];
   return (
     <View style={styles.tabs}>
       {tabs.map((tab) => (
