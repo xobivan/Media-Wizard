@@ -1,11 +1,17 @@
 import * as MediaLibrary from 'expo-media-library/legacy';
-import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
 import type { PermissionState } from '../components/types/mediaWizardTypes';
 import { determineMediaPermissionStrategy, type MediaPermissionStrategy } from '../services/smartCompression';
 
 export function useMediaPermissions() {
   const [permission, setPermission] = useState<PermissionState>('checking');
   const [mediaPermissionStrategy, setMediaPermissionStrategy] = useState<MediaPermissionStrategy>('fallback');
+
+  const refreshPermission = useCallback(async () => {
+    const response = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
+    setPermission(response.status === 'granted' ? response.accessPrivileges === 'limited' ? 'limited' : 'granted' : 'denied');
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -28,10 +34,14 @@ export function useMediaPermissions() {
       }
     };
     void loadPermission();
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') void refreshPermission();
+    });
     return () => {
       mounted = false;
+      subscription.remove();
     };
-  }, []);
+  }, [refreshPermission]);
 
   const requestMediaPermission = async () => {
     const response = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);

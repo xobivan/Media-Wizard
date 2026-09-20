@@ -1,16 +1,20 @@
 import { Text, View } from 'react-native';
-import type { ScanSummary } from '../types/mediaWizardTypes';
+import type { ScanSummary, ScanTarget } from '../types/mediaWizardTypes';
 import { styles } from '../styles/mediaWizardStyles';
 
 export function ResultsSummary({
   summary,
   albumTitle,
   estimatedSavings,
+  scanTargets,
 }: {
   summary: ScanSummary;
   albumTitle?: string;
   estimatedSavings: number;
+  scanTargets: ScanTarget[];
 }) {
+  const showsPhotos = scanTargets.includes('photoDuplicates');
+  const showsVideos = scanTargets.includes('videoDuplicates') || scanTargets.includes('largeVideos');
   return (
     <>
       <Text style={styles.resultHeadline}>
@@ -24,15 +28,9 @@ export function ResultsSummary({
       <Text style={styles.savingsEstimate}>Up to {formatBytes(estimatedSavings)} could be saved after cleaning.</Text>
 
       <View style={styles.statRow}>
-        <Stat
-          value={summary.photos}
-          label="Photos"
-        />
+        {showsPhotos ? <Stat value={summary.photos} label="Photos" /> : null}
 
-        <Stat
-          value={summary.videos}
-          label="Videos"
-        />
+        {showsVideos ? <Stat value={summary.videos} label="Videos" /> : null}
 
         <Stat
           value={summary.total}
