@@ -21,7 +21,7 @@ export default function App() {
   const { largeVideos, selectedLarge, selectedSavings, toggleSelection, selectAll, setLargeVideos, setSelectedLarge } = useLargeVideoSelection();
   const { 
     scanState, scanError, scanProgress, 
-    scanMode, scanTargets, scannedAssets, scanSummary, 
+    scanMode, scanTargets, scannedAssets, scanSummary,
     duplicateGroups, duplicateStorageSaved, 
     startScan: hookStartScan, abortScan, 
     confirmAbortScan, removeDeletedAssetsFromSummary, 

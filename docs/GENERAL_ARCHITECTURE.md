@@ -19,8 +19,8 @@ compression algorithms.
 ### Hooks
 
 - [`useMediaPermissions.ts`](../src/hooks/useMediaPermissions.ts) manages
-  photo/video permission state and Android deletion-permission strategy
-  detection.
+  photo/video permission state, refreshes it when the app returns from system
+  Settings, and detects the Android deletion-permission strategy.
 - [`useAlbumSelection.ts`](../src/hooks/useAlbumSelection.ts) manages the
   selected source: the entire library or one album.
 - [`useLargeVideoSelection.ts`](../src/hooks/useLargeVideoSelection.ts)
@@ -52,7 +52,7 @@ compression algorithms.
 ### Screens and presentation components
 
 - [`HomeScreen.tsx`](../src/components/screens/HomeScreen.tsx) selects the
-  source, scan depth, and permissions.
+  source, scan depth, independent scan categories, and permissions.
 - [`ResultsScreen.tsx`](../src/components/screens/ResultsScreen.tsx) displays
   scan progress/errors, summaries, duplicate groups, and large videos.
 - [`CleanupScreen.tsx`](../src/components/screens/CleanupScreen.tsx)
@@ -78,8 +78,13 @@ The user can:
 - Choose the entire library.
 - Open the album picker and choose an album.
 - Choose `fast` or `deep` scan mode.
-- Request or change media permissions.
-- Start a scan.
+- Choose any combination of `Picture duplicates`, `Video duplicates`, and
+  `Large videos`, or use `All` to select every category.
+- Deselect all categories if desired. Scanning is disabled and the button
+  visibly changes to "Choose what to scan" until at least one is selected.
+- When media permission is denied, use `Allow` to open system Settings.
+  Permission status is refreshed after returning to the app.
+- Start a scan once access and at least one category are selected.
 
 `HomeScreen` is presentational. Its callbacks are implemented by hooks or by
 thin orchestration functions in `App.tsx`.
@@ -94,10 +99,9 @@ Starting a scan moves to Results immediately. While scanning:
 
 After a successful scan:
 
-- The summary shows photo, video, and total counts.
-- Photos shows duplicate photo groups.
-- Videos shows duplicate video groups.
-- Large files shows videos above the large-video threshold.
+- The summary shows counts for the media types that were scanned.
+- Only tabs for selected categories are visible: Photos for picture duplicates,
+  Videos for video duplicates, and Large files for large videos.
 
 The user can delete duplicate groups or continue to compression setup.
 
@@ -127,7 +131,9 @@ state before showing new Results.
 
 `useMediaPermissions` starts in `checking`, queries
 `MediaLibrary.getPermissionsAsync`, and maps the result to `granted`, `limited`,
-or `denied`. It also determines the platform deletion strategy.
+or `denied`. It repeats this query whenever the app becomes active, which keeps
+the UI in sync after the user changes the permission in system Settings. It also
+determines the platform deletion strategy.
 
 `useAlbumSelection` maintains:
 
@@ -146,6 +152,7 @@ the scan.
 - `scanState`
 - `scanError`
 - `scanProgress`
+- `scanTargets`
 - `scannedAssets`
 - `scanSummary`
 - `duplicateGroups`
@@ -153,6 +160,11 @@ the scan.
 
 `scannedAssets` remains available because compression later needs to resolve
 selected large-video IDs back to Media Library assets.
+
+`scanTargets` is a composable list of `photoDuplicates`, `videoDuplicates`, and
+`largeVideos`. `App.tsx` uses it to select the first applicable Results tab at
+scan start and to limit the tabs exposed on Results.
+
 
 ### Cross-hook callback boundaries
 

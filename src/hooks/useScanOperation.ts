@@ -100,15 +100,18 @@ export function useScanOperation() {
       count('scan.assets.photos', photos);
       count('scan.assets.videos', videos);
 
-      const duplicateAssets = assets.filter((asset) => (
-        (asset.mediaType === 'photo' && scansPhotoDuplicates) ||
-        (asset.mediaType === 'video' && scansVideoDuplicates)
-      ));
-      const groups = duplicateAssets.length === 0
-        ? []
-        : scanMode === 'deep'
-          ? await timed('scan.deep-duplicate-detection.total', () => findDuplicateGroups(duplicateAssets, updateScanProgress))
-          : await findDuplicateGroupsLegacy(duplicateAssets, updateScanProgress);
+      const detectDuplicates = scanMode === 'deep' ? findDuplicateGroups : findDuplicateGroupsLegacy;
+      const photoGroups = scansPhotoDuplicates
+        ? await timed(`scan.${scanMode}-photo-duplicates.total`, () => (
+          detectDuplicates(assets.filter((asset) => asset.mediaType === 'photo'), updateScanProgress)
+        ))
+        : [];
+      const videoGroups = scansVideoDuplicates
+        ? await timed(`scan.${scanMode}-video-duplicates.total`, () => (
+          detectDuplicates(assets.filter((asset) => asset.mediaType === 'video'), updateScanProgress)
+        ))
+        : [];
+      const groups = [...photoGroups, ...videoGroups];
       if (scanCancelled.current) throw new ScanAbortedError();
 
       const detectedLargeVideos = scansLargeVideos
@@ -116,7 +119,7 @@ export function useScanOperation() {
         : [];
       if (scanCancelled.current) throw new ScanAbortedError();
 
-      if (scanMode === 'deep') report();
+      report();
 
       setDuplicateGroups(groups);
       onLargeVideosDetected(detectedLargeVideos);
