@@ -7,6 +7,10 @@
 Change [`useScanOperation.ts`](../src/hooks/useScanOperation.ts) for scan
 lifecycle, cancellation, progress, and scan state changes.
 
+Keep scan-category filtering in this hook. It must query only the media types
+needed by the selected `ScanTarget` values and must not invoke an unselected
+duplicate detector or large-video detection.
+
 Change the appropriate duplicate detector for matching behavior:
 
 - [`duplicateDetectionLegacy.ts`](../src/services/duplicateDetectionLegacy.ts)
@@ -48,6 +52,8 @@ Cross-screen state transitions belong in `App.tsx` or a related hook.
 Important existing fallbacks include:
 
 - Permission status is explicit: checking, granted, limited, or denied.
+- Permission status is refreshed when the app becomes active after system
+  Settings; a denied-state Allow action opens Settings directly.
 - Duplicate fingerprinting falls back to file hashes or metadata when decoding
   fails.
 - Native video players are released in `finally`.
@@ -69,7 +75,7 @@ Keep state with the hook that owns the domain:
 | Permission status | `useMediaPermissions` |
 | Album selection | `useAlbumSelection` |
 | Large-video selection | `useLargeVideoSelection` |
-| Scan results and summary | `useScanOperation` |
+| Scan targets, results, and summary | `useScanOperation` |
 | Compression state | `useCompressionOperation` |
 | Duplicate deletion actions | `useDuplicateCleanup` |
 | Screen and back navigation | `useAppNavigation` |
@@ -115,7 +121,8 @@ npx tsc --noEmit
 
 Use the existing shared types from
 [`mediaWizardTypes.ts`](../src/components/types/mediaWizardTypes.ts), especially
-`LargeVideo`, `ScanState`, `ScanMode`, `ScanSummary`, and `ResultTab`.
+`LargeVideo`, `ScanState`, `ScanMode`, `ScanTarget`, `ScanSummary`, and
+`ResultTab`.
 
 Avoid reintroducing `any` into hook APIs. Prefer a shared domain type or a
 focused `Pick<...>` type.

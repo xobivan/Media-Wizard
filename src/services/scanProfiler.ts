@@ -72,6 +72,6 @@ export function report(): ScanProfileRow[] {
     }))
     .sort((a, b) => b.totalMs - a.totalMs);
 
-  console.log('[ScanProfile]', JSON.stringify(rows, null, 2));
+  if (__DEV__) console.log('[ScanProfile]', JSON.stringify(rows, null, 2));
   return rows;
 }

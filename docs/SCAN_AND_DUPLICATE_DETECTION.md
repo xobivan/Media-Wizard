@@ -9,10 +9,10 @@ When a scan starts it:
 1. Clears the previous error.
 2. Sets state to `scanning`.
 3. Resets progress, duplicate groups, scanned assets, and duplicate savings.
-4. Loads Media Library assets in pages of 100.
+4. Loads only the required Media Library asset types in pages of 100.
 5. Counts photos, videos, and total assets.
-6. Runs the selected duplicate detector.
-7. Finds large videos.
+6. Runs the selected duplicate detector only for requested duplicate types.
+7. Finds large videos only when that category is requested.
 8. Stores the results.
 9. Sets progress to 100 and state to `complete`.
 
@@ -23,7 +23,43 @@ detection, and after large-video detection.
 An internal `ScanAbortedError` stops the workflow without showing a scan error.
 Other errors set `scanState` to `error` and populate `scanError`.
 
-## 2. Scan modes
+## 2. Scan categories
+
+`ScanTarget` supports three independently selectable categories:
+
+| Target | Media Library query | Work performed | Results tab |
+| --- | --- | --- | --- |
+| `photoDuplicates` | Photos | Duplicate detection for photos | Photos |
+| `videoDuplicates` | Videos | Duplicate detection for videos | Videos |
+| `largeVideos` | Videos | Large-video detection | Large files |
+
+The Home screen permits any combination. `All` selects all three targets.
+Users may deselect every target, but the Scan button remains disabled until one
+is selected. This avoids a no-op scan and makes the disabled state explicit in
+the UI.
+
+When only photo duplicates are selected, no videos are loaded. When one or both
+video-oriented targets are selected, videos are loaded once and shared by the
+requested analyses. Expensive normalized-image work and video frame extraction
+are therefore skipped whenever duplicate detection for that type was not
+requested.
+
+## 3. Scan benchmarks
+
+Every completed development scan records elapsed time for the operations that
+were selected and logs it to the JavaScript console as `[ScanProfile]`. The
+output includes Media Library loading plus one row per requested analysis:
+
+- `Fast scan · Picture duplicates` or `Deep scan · Picture duplicates`
+- `Fast scan · Video duplicates` or `Deep scan · Video duplicates`
+- `Large videos`
+
+The benchmark uses `performance.now()` around each top-level operation. The
+same output retains lower-level timings for later performance diagnosis and
+optimization; it is not displayed to end users or collected in production
+builds.
+
+## 4. Scan modes
 
 The Home screen selects one of two modes:
 
@@ -40,7 +76,7 @@ Both detectors use:
 
 This reduces unnecessary hashing, image work, and video decoding.
 
-## 3. Fast scan: exact file matching
+## 5. Fast scan: exact file matching
 
 Implemented by
 [`duplicateDetectionLegacy.ts`](../src/services/duplicateDetectionLegacy.ts).
@@ -83,7 +119,7 @@ than two assets are removed.
   re-encoded.
 - The metadata fallback is less authoritative than a content hash.
 
-## 4. Deep scan: normalized fingerprints
+## 6. Deep scan: normalized fingerprints
 
 Implemented by
 [`duplicateDetection.ts`](../src/services/duplicateDetection.ts).
@@ -101,14 +137,16 @@ photo : width : height
 For videos:
 
 ```text
-video : width : height : rounded duration
+video : reduced aspect ratio : rounded duration
 ```
 
-Unlike fast scan, file size is not part of the candidate key. This allows deep
-scan to compare differently encoded or resized files with matching dimensions
-and approximate duration.
+Unlike fast scan, file size is not part of the candidate key. Reducing an
+aspect ratio (for example, `1920:1080` and `1280:720` both become `16:9`)
+allows Deep Scan to compare differently encoded or resized videos that retain
+the same framing and approximate duration. The subsequent frame fingerprint
+verification remains unchanged.
 
-## 5. Deep photo matching
+## 7. Deep photo matching
 
 For every candidate photo:
 
@@ -135,7 +173,7 @@ filename : duration : width : height
 This fallback keeps one unsupported image from aborting the whole scan, but it
 is less reliable than normalized content matching.
 
-## 6. Deep video matching
+## 8. Deep video matching
 
 For every candidate video:
 
@@ -171,7 +209,7 @@ decoder instances.
 - Two videos can theoretically match if sampled frames match while content
   differs between sample points.
 
-## 7. Duplicate groups and original selection
+## 9. Duplicate groups and original selection
 
 A duplicate group contains:
 
@@ -184,7 +222,7 @@ When displaying or deleting a group, the asset with the oldest
 `creationTime` is treated as the original and kept. All other assets are
 duplicates.
 
-## 8. Deleting duplicates
+## 10. Deleting duplicates
 
 [`useDuplicateCleanup.ts`](../src/hooks/useDuplicateCleanup.ts) shows a
 confirmation dialog before calling `MediaLibrary.deleteAssetsAsync`.
@@ -199,7 +237,7 @@ After successful deletion it:
 
 If deletion fails, the group remains visible and an error alert is displayed.
 
-## 9. Estimated savings
+## 11. Estimated savings
 
 [`mediaSavings.ts`](../src/services/mediaSavings.ts) calculates:
 

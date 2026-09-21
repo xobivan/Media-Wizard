@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { Album, PermissionState, ScanMode, ScanState } from '../types/mediaWizardTypes';
+import { ALL_SCAN_TARGETS, type Album, type PermissionState, type ScanMode, type ScanState, type ScanTarget } from '../types/mediaWizardTypes';
 import { styles } from '../styles/mediaWizardStyles';
 
 type Props = {
@@ -18,6 +18,8 @@ type Props = {
   onStartScan: () => void;
   scanMode: ScanMode;
   onScanModeChange: (mode: ScanMode) => void;
+  scanTargets: ScanTarget[];
+  onScanTargetsChange: (targets: ScanTarget[]) => void;
 };
 
 export function HomeScreen({
@@ -34,7 +36,16 @@ export function HomeScreen({
   onStartScan,
   scanMode,
   onScanModeChange,
+  scanTargets,
+  onScanTargetsChange,
 }: Props) {
+  const toggleTarget = (target: ScanTarget) => {
+    const next = scanTargets.includes(target)
+      ? scanTargets.filter((item) => item !== target)
+      : [...scanTargets, target];
+    onScanTargetsChange(next);
+  };
+  const allSelected = scanTargets.length === ALL_SCAN_TARGETS.length;
   return (
     <SafeAreaView
       edges={['top', 'left', 'right', 'bottom']}
@@ -162,6 +173,12 @@ export function HomeScreen({
         <ScanModeOption mode="fast" selected={scanMode === 'fast'} onPress={() => onScanModeChange('fast')} title="Fast scan" detail="Uses exact file matching and finishes sooner." />
         <ScanModeOption mode="deep" selected={scanMode === 'deep'} onPress={() => onScanModeChange('deep')} title="Deep scan" detail="Normalizes photos to find more duplicates, but may take much longer." />
 
+        <Text style={styles.sectionLabel}>Choose what to find</Text>
+        <ScanTargetOption selected={allSelected} onPress={() => onScanTargetsChange(allSelected ? scanTargets : ALL_SCAN_TARGETS)} title="All" detail="Photos, videos, and large videos." />
+        <ScanTargetOption selected={scanTargets.includes('videoDuplicates')} onPress={() => toggleTarget('videoDuplicates')} title="Video duplicates" detail="Find matching video files." />
+        <ScanTargetOption selected={scanTargets.includes('photoDuplicates')} onPress={() => toggleTarget('photoDuplicates')} title="Picture duplicates" detail="Find matching photo files." />
+        <ScanTargetOption selected={scanTargets.includes('largeVideos')} onPress={() => toggleTarget('largeVideos')} title="Large videos" detail="Find videos over 200 MB to compress." />
+
         <View style={styles.privacy}>
           <Text style={styles.privacyIcon}>
             ✓
@@ -245,7 +262,7 @@ export function HomeScreen({
               </Text>
             </View>
 
-            <Pressable onPress={onRequestPermission}>
+            <Pressable onPress={() => void Linking.openSettings()}>
               <Text style={styles.permissionAction}>
                 Allow
               </Text>
@@ -259,32 +276,23 @@ export function HomeScreen({
             (
               permission === 'checking' ||
               permission === 'denied' ||
-              scanState === 'scanning'
+              scanState === 'scanning' ||
+              scanTargets.length === 0
             ) &&
               styles.primaryButtonDisabled,
           ]}
           disabled={
             permission === 'checking' ||
             permission === 'denied' ||
-            scanState === 'scanning'
+            scanState === 'scanning' ||
+            scanTargets.length === 0
           }
           onPress={onStartScan}
         >
           <Text style={styles.primaryButtonText}>
-            Scan {source.toLowerCase()} →
+            {scanTargets.length === 0 ? 'Choose what to scan' : `Scan ${source.toLowerCase()} →`}
           </Text>
         </Pressable>
-
-        {permission === 'denied' ? (
-          <Pressable
-            style={styles.settingsButton}
-            onPress={() => void Linking.openSettings()}
-          >
-            <Text style={styles.settingsButtonText}>
-              Open device settings
-            </Text>
-          </Pressable>
-        ) : null}
 
         <Text style={styles.version}>
           MediaWizard prototype · Local processing
@@ -295,6 +303,18 @@ export function HomeScreen({
 }
 
 function ScanModeOption({ mode: _mode, selected, onPress, title, detail }: { mode: ScanMode; selected: boolean; onPress: () => void; title: string; detail: string }) {
+  return (
+    <Pressable style={[styles.sourceCard, selected && styles.sourceActive]} onPress={onPress}>
+      <View style={styles.sourceText}>
+        <Text style={styles.sourceTitle}>{title}</Text>
+        <Text style={styles.sourceDetail}>{detail}</Text>
+      </View>
+      <Text style={styles.radio}>{selected ? '●' : '○'}</Text>
+    </Pressable>
+  );
+}
+
+function ScanTargetOption({ selected, onPress, title, detail }: { selected: boolean; onPress: () => void; title: string; detail: string }) {
   return (
     <Pressable style={[styles.sourceCard, selected && styles.sourceActive]} onPress={onPress}>
       <View style={styles.sourceText}>

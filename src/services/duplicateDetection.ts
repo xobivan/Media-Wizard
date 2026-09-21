@@ -33,7 +33,10 @@ export async function findDuplicateGroups(
 
       const metadataKey = asset.mediaType === 'photo'
         ? [asset.mediaType, asset.width, asset.height].join(':')
-        : [asset.mediaType, asset.width, asset.height, Math.round(asset.duration)].join(':');
+        // Videos can be re-exported at a different resolution while retaining their framing and
+        // duration. Group by a reduced aspect ratio instead of exact dimensions so those copies
+        // reach the existing first-frame and three-frame verification steps.
+        : [asset.mediaType, getAspectRatioKey(asset.width, asset.height), Math.round(asset.duration)].join(':');
       const candidates = candidatesByMetadata.get(metadataKey) ?? [];
       candidates.push({ asset, size });
       candidatesByMetadata.set(metadataKey, candidates);
@@ -272,4 +275,26 @@ export async function findDuplicateGroups(
   return [...groups.values()]
     .filter((group) => group.length > 1)
     .map((group) => ({ mediaType: group[0].mediaType, assets: group }));
+}
+
+function getAspectRatioKey(width: number, height: number): string {
+  const normalizedWidth = Math.round(width);
+  const normalizedHeight = Math.round(height);
+
+  // Keep malformed assets out of a broad unknown-dimensions group.
+  if (normalizedWidth <= 0 || normalizedHeight <= 0) return `${width}:${height}`;
+
+  const divisor = greatestCommonDivisor(normalizedWidth, normalizedHeight);
+  return `${normalizedWidth / divisor}:${normalizedHeight / divisor}`;
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+  let a = Math.abs(left);
+  let b = Math.abs(right);
+  while (b !== 0) {
+    const remainder = a % b;
+    a = b;
+    b = remainder;
+  }
+  return a;
 }

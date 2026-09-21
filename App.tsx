@@ -4,7 +4,7 @@ import { CleanupScreen } from './src/components/screens/CleanupScreen';
 import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
-import type {ResultTab} from './src/components/types/mediaWizardTypes';
+import { ALL_SCAN_TARGETS, type ResultTab, type ScanTarget } from './src/components/types/mediaWizardTypes';
 import type { CompressionQuality, StorageStrategy} from './src/services/smartCompression';
 import { calculateEstimatedSavings } from './src/services/mediaSavings';
 import { useMediaPermissions } from './src/hooks/useMediaPermissions';
@@ -21,11 +21,11 @@ export default function App() {
   const { largeVideos, selectedLarge, selectedSavings, toggleSelection, selectAll, setLargeVideos, setSelectedLarge } = useLargeVideoSelection();
   const { 
     scanState, scanError, scanProgress, 
-    scanMode, scannedAssets, scanSummary, 
+    scanMode, scanTargets, scannedAssets, scanSummary,
     duplicateGroups, duplicateStorageSaved, 
     startScan: hookStartScan, abortScan, 
     confirmAbortScan, removeDeletedAssetsFromSummary, 
-    setScanMode, setScannedAssets, setScanSummary, 
+    setScanMode, setScanTargets, setScannedAssets, setScanSummary, 
     setDuplicateGroups, setDuplicateStorageSaved 
   } = useScanOperation();
   const { 
@@ -47,6 +47,7 @@ export default function App() {
   });
 
   const startScan = async () => {
+    setTab(getVisibleTabs(scanTargets)[0]);
     await hookStartScan(
       selectedAlbum,
       () => {
@@ -120,6 +121,8 @@ export default function App() {
         albumPickerVisible={albumPickerVisible}
         scanMode={scanMode}
         onScanModeChange={setScanMode}
+        scanTargets={scanTargets}
+        onScanTargetsChange={setScanTargets}
         onSelectLibrary={selectLibrary}
         onChooseFolder={chooseFolder}
         onSelectAlbum={selectAlbum}
@@ -138,6 +141,7 @@ export default function App() {
           selectedLarge={selectedLarge}
           largeVideos={largeVideos}
           duplicateGroups={duplicateGroups}
+          scanTargets={scanTargets}
           onTabChange={setTab}
           onToggleLarge={toggleSelection}
           onSelectAll={selectAll}
@@ -179,4 +183,12 @@ export default function App() {
           />;
 
   return <SafeAreaProvider>{content}</SafeAreaProvider>;
+}
+
+function getVisibleTabs(scanTargets: ScanTarget[]): ResultTab[] {
+  const tabs: ResultTab[] = [];
+  if (scanTargets.includes('photoDuplicates')) tabs.push('Photos');
+  if (scanTargets.includes('videoDuplicates')) tabs.push('Videos');
+  if (scanTargets.includes('largeVideos')) tabs.push('Large files');
+  return tabs.length > 0 ? tabs : ['Photos'];
 }
