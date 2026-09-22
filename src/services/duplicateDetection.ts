@@ -18,6 +18,10 @@ export type DuplicateGroup = {
 
 type Candidate = { asset: MediaLibrary.Asset; size: number };
 
+// Native thumbnail extraction can occasionally stall forever on a corrupt or partially-backed-up
+// video. Failing that one video is preferable to leaving the entire Deep Scan permanently stuck.
+const VIDEO_THUMBNAIL_TIMEOUT_MS = 30_000;
+
 export async function findDuplicateGroups(
   assets: MediaLibrary.Asset[],
   onProgress?: (progress: number) => void,
@@ -32,7 +36,11 @@ export async function findDuplicateGroups(
       if (!size || size <= 0) continue;
 
       const metadataKey = asset.mediaType === 'photo'
-        ? [asset.mediaType, asset.width, asset.height].join(':')
+        // Camera rolls commonly contain thousands of photos with identical dimensions. A coarse,
+        // logarithmic size bucket cheaply eliminates the clearly implausible pairs before they
+        // reach ImageManipulator, while deliberately avoiding exact-size matching (which would
+        // turn Deep Scan into Fast Scan and exclude ordinary re-encodes).
+        ? [asset.mediaType, asset.width, asset.height, getPhotoSizeBucket(size)].join(':')
         // Videos can be re-exported at a different resolution while retaining their framing and
         // duration. Group by a reduced aspect ratio instead of exact dimensions so those copies
         // reach the existing first-frame and three-frame verification steps.
@@ -207,7 +215,11 @@ export async function findDuplicateGroups(
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const times = getVideoFrameTimes(asset);
       const thumbnails = await timed('deep.video.thumbnail-extract', () => (
-        player!.generateThumbnailsAsync(times, { maxWidth: 64, maxHeight: 64 })
+        withTimeout(
+          player!.generateThumbnailsAsync(times, { maxWidth: 64, maxHeight: 64 }),
+          VIDEO_THUMBNAIL_TIMEOUT_MS,
+          'Video thumbnail extraction timed out',
+        )
       ));
       const frameHashes: string[] = [];
 
@@ -238,7 +250,11 @@ export async function findDuplicateGroups(
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const [firstFrameTime] = getVideoFrameTimes(asset);
       const [thumbnail] = await timed('deep.video.first-frame-extract', () => (
-        player!.generateThumbnailsAsync([firstFrameTime], { maxWidth: 64, maxHeight: 64 })
+        withTimeout(
+          player!.generateThumbnailsAsync([firstFrameTime], { maxWidth: 64, maxHeight: 64 }),
+          VIDEO_THUMBNAIL_TIMEOUT_MS,
+          'Video first-frame extraction timed out',
+        )
       ));
       if (!thumbnail) throw new Error('No first-frame thumbnail was generated.');
       return await hashVideoFrame(thumbnail);
@@ -275,6 +291,27 @@ export async function findDuplicateGroups(
   return [...groups.values()]
     .filter((group) => group.length > 1)
     .map((group) => ({ mediaType: group[0].mediaType, assets: group }));
+}
+
+function getPhotoSizeBucket(size: number): number {
+  // Adjacent buckets differ by a factor of two. This is broad enough to retain likely JPEG
+  // quality/metadata re-encodes, yet substantially narrows the usual single-dimension camera
+  // group. Invalid sizes are already excluded before this helper is called.
+  return Math.floor(Math.log2(size));
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 function getAspectRatioKey(width: number, height: number): string {
