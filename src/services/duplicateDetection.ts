@@ -5,6 +5,7 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import { createVideoPlayer, type VideoThumbnail } from 'expo-video';
 import { getMediaFile } from './mediaAssetFile';
 import { count, timed, timedSync } from './scanProfiler';
+import { getNativePhotoSignatures, isNativeThumbnailSignaturesAvailable } from './nativeThumbnailSignatures';
 
 export type DuplicateAsset = MediaLibrary.Asset & {
   fingerprint: string;
@@ -49,6 +50,10 @@ export async function findDuplicateGroups(
       candidates.push({ asset, size });
       candidatesByMetadata.set(metadataKey, candidates);
       onProgress?.(Math.round(((index + 1) / assets.length) * 50));
+      // Yield to the JS event loop every 100 items so UI touches and cancellation register instantly
+      if (index % 100 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
   });
 
@@ -65,7 +70,10 @@ export async function findDuplicateGroups(
   // video work never overlap with each other, though: each pool is fully drained before the
   // other starts a new job, so we never combine in-flight image rendering with in-flight native
   // video decoders, which keeps peak memory/decoder pressure bounded on low-end devices.
-  const PHOTO_FINGERPRINT_CONCURRENCY = 3;
+  // Photo fingerprinting: when native thumbnail signatures module is available, we process photos
+  // in larger parallel batches of 10 since native ContentResolver.loadThumbnail is lightweight and doesn't
+  // allocate full-resolution image buffers in JS memory.
+  const PHOTO_FINGERPRINT_CONCURRENCY = isNativeThumbnailSignaturesAvailable() ? 10 : 3;
   const VIDEO_FINGERPRINT_CONCURRENCY = 2;
   let completed = 0;
   const recordFingerprint = (candidate: Candidate, fingerprint: string) => {
@@ -87,45 +95,62 @@ export async function findDuplicateGroups(
   // videos that can never match anything.
   const videoFirstFrameResults: { candidate: Candidate; firstFrameFingerprint: string }[] = [];
 
-  const inFlightPhotos = new Set<Promise<void>>();
-  const inFlightVideos = new Set<Promise<void>>();
-  try {
-    for (const candidate of candidates) {
-      if (candidate.asset.mediaType === 'video') {
-        // Drain any in-flight photo work first so videos never run concurrently with photo rendering.
-        if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
+  // Photo fingerprinting: Batch candidate photos together so native getNativePhotoSignatures processes
+  // up to 100 URIs per single React Native bridge call, avoiding per-item JSI bridge overhead.
+  const photoCandidates = candidates.filter((c) => c.asset.mediaType === 'photo');
+  const videoCandidates = candidates.filter((c) => c.asset.mediaType === 'video');
 
-        let tracked: Promise<void>;
-        tracked = (async () => {
-          const firstFrameFingerprint = await timed('deep.video-first-frame.total', () => (
-            getVideoFirstFrameFingerprint(candidate.asset)
-          ));
-          videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
-        })().finally(() => inFlightVideos.delete(tracked));
-        inFlightVideos.add(tracked);
+  if (isNativeThumbnailSignaturesAvailable() && photoCandidates.length > 0) {
+    const photoUris = photoCandidates.map((c) => c.asset.uri);
+    const signatures = await timed('deep.photo.native-signature', () => (
+      getNativePhotoSignatures(photoUris, (completedCount) => {
+        onProgress?.(50 + Math.round((completedCount / candidates.length) * 50));
+      })
+    ));
+    const sigMap = new Map<string, string>();
+    for (const sig of signatures) {
+      if (sig?.pHash) sigMap.set(sig.uri, sig.pHash);
+    }
 
-        if (inFlightVideos.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideos);
-        continue;
+    for (const candidate of photoCandidates) {
+      const pHash = sigMap.get(candidate.asset.uri);
+      if (pHash) {
+        recordFingerprint(candidate, pHash);
+      } else {
+        const fallbackFingerprint = await getPhotoFingerprint(candidate.asset);
+        recordFingerprint(candidate, fallbackFingerprint);
       }
-
-      // Drain any in-flight video work first so photos never run concurrently with video decoding.
-      if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
-
+    }
+  } else {
+    const inFlightPhotos = new Set<Promise<void>>();
+    for (const candidate of photoCandidates) {
       let tracked: Promise<void>;
       tracked = (async () => {
         const fingerprint = await timed('deep.photo-fingerprint.total', () => getPhotoFingerprint(candidate.asset));
         recordFingerprint(candidate, fingerprint);
       })().finally(() => inFlightPhotos.delete(tracked));
       inFlightPhotos.add(tracked);
-
       if (inFlightPhotos.size >= PHOTO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightPhotos);
     }
     if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
+  }
+
+  const inFlightVideos = new Set<Promise<void>>();
+  try {
+    for (const candidate of videoCandidates) {
+      let tracked: Promise<void>;
+      tracked = (async () => {
+        const firstFrameFingerprint = await timed('deep.video-first-frame.total', () => (
+          getVideoFirstFrameFingerprint(candidate.asset)
+        ));
+        videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
+      })().finally(() => inFlightVideos.delete(tracked));
+      inFlightVideos.add(tracked);
+
+      if (inFlightVideos.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideos);
+    }
     if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
   } catch (error) {
-    // Drain remaining in-flight work (ignoring further errors) before propagating the first
-    // failure, so cancellation/error handling doesn't leave unhandled promise rejections behind.
-    await Promise.allSettled(inFlightPhotos);
     await Promise.allSettled(inFlightVideos);
     throw error;
   }
@@ -166,9 +191,17 @@ export async function findDuplicateGroups(
 
   async function getPhotoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
     try {
+      if (isNativeThumbnailSignaturesAvailable()) {
+        const [signature] = await timed('deep.photo.native-signature', () => getNativePhotoSignatures([asset.uri]));
+        if (signature?.pHash) {
+          return signature.pHash;
+        } else {
+          if (__DEV__) console.warn('[NativeThumbnail] Native signature missing/failed for URI:', asset.uri, signature);
+        }
+      }
       return await normalizedPhotoFingerprint(asset);
     } catch {
-      // Some Android media providers expose files that ImageManipulator cannot decode.
+      // Some Android media providers expose files that native loader or ImageManipulator cannot decode.
       // Fall back to exact streaming hash matching so one unsupported image does not fail the scan.
       return getStreamingFileFingerprint(asset);
     }
