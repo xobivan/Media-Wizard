@@ -13,6 +13,23 @@ down from the original 32m 42s baseline. Photo decoding remains the dominant
 cost (5,505 candidate photos fully decoded at source resolution just to
 produce a 64×64 fingerprint).
 
+## Implemented: coarse photo-size candidate buckets
+
+Deep Scan now groups photos by exact dimensions **and** a coarse logarithmic
+file-size bucket before normalizing them. Each bucket spans a 2× size range,
+so files with nearby sizes remain candidates even when their bytes differ due
+to JPEG quality, metadata, or a routine re-encode. Exact file size is not
+used, and video matching is unchanged.
+
+This specifically prevents a camera roll's many same-dimension photos from
+all entering the expensive resize → PNG → hash phase. It does make deeply
+re-encoded copies whose sizes differ by 2× or more ineligible for Deep Scan;
+test known re-encoded duplicate pairs and record the candidate count and scan
+time on the target device before further tuning. Creation time is deliberately
+not part of the key: imported and restored duplicates often have unrelated
+timestamps, so it would increase false negatives without being necessary for
+this first-stage reduction.
+
 A persistent fingerprint cache was discussed but deprioritized: it only
 speeds up *subsequent* scans, not the first-scan target.
 

@@ -85,16 +85,28 @@ export function useScanOperation() {
           videos += page.assets.filter((asset) => asset.mediaType === 'video').length;
           total += page.assets.length;
           assets.push(...page.assets);
-          setScanProgress(page.totalCount > 0 ? Math.min(95, Math.round((total / page.totalCount) * 100)) : 95);
+          // Reserve the remaining progress for duplicate detection. Each detector receives its
+          // own non-overlapping range below, so switching from photos to videos cannot move the
+          // progress bar backwards.
+          setScanProgress(page.totalCount > 0 ? Math.min(30, Math.round((total / page.totalCount) * 30)) : 30);
           hasNextPage = page.hasNextPage;
           after = page.endCursor;
         }
       });
 
-      const updateScanProgress = (progress: number) => {
+      setScanProgress(30);
+
+      const createDuplicateProgressUpdater = (start: number, end: number) => (progress: number) => {
         if (scanCancelled.current) throw new ScanAbortedError();
-        setScanProgress(50 + Math.round(progress / 2));
+        const mappedProgress = start + Math.round((progress / 100) * (end - start));
+        // Fingerprint jobs complete concurrently, so retain the greatest reported value even if
+        // React applies state updates out of order.
+        setScanProgress((current) => Math.max(current, mappedProgress));
       };
+
+      const photoProgressEnd = scansPhotoDuplicates && scansVideoDuplicates ? 65 : 100;
+      const photoProgress = createDuplicateProgressUpdater(30, photoProgressEnd);
+      const videoProgress = createDuplicateProgressUpdater(scansPhotoDuplicates ? 65 : 30, 100);
 
       count('scan.assets.total', assets.length);
       count('scan.assets.photos', photos);
@@ -103,12 +115,13 @@ export function useScanOperation() {
       const detectDuplicates = scanMode === 'deep' ? findDuplicateGroups : findDuplicateGroupsLegacy;
       const photoGroups = scansPhotoDuplicates
         ? await timed(`scan.${scanMode}-photo-duplicates.total`, () => (
-          detectDuplicates(assets.filter((asset) => asset.mediaType === 'photo'), updateScanProgress)
+          detectDuplicates(assets.filter((asset) => asset.mediaType === 'photo'), photoProgress)
         ))
         : [];
+      if (scansPhotoDuplicates) setScanProgress((current) => Math.max(current, photoProgressEnd));
       const videoGroups = scansVideoDuplicates
         ? await timed(`scan.${scanMode}-video-duplicates.total`, () => (
-          detectDuplicates(assets.filter((asset) => asset.mediaType === 'video'), updateScanProgress)
+          detectDuplicates(assets.filter((asset) => asset.mediaType === 'video'), videoProgress)
         ))
         : [];
       const groups = [...photoGroups, ...videoGroups];
