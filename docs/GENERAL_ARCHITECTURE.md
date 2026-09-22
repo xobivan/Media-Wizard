@@ -34,10 +34,12 @@ compression algorithms.
 - [`useAppNavigation.ts`](../src/hooks/useAppNavigation.ts) owns screen
   navigation and Android hardware-back behavior.
 
-### Services
+### Services & Local Native Modules
 
 - [`duplicateDetection.ts`](../src/services/duplicateDetection.ts) implements
-  deep duplicate detection.
+  deep duplicate detection, coordinating native DCT pHash thumbnail signatures and JS fallbacks.
+- [`modules/thumbnail-signatures`](../modules/thumbnail-signatures) local Android Expo native module providing hardware-downsampled thumbnails and 64-bit DCT perceptual hash (pHash) generation.
+- [`nativeThumbnailSignatures.ts`](../src/services/nativeThumbnailSignatures.ts) TypeScript interface layer for batching thumbnail signature calls to the native Kotlin module.
 - [`duplicateDetectionLegacy.ts`](../src/services/duplicateDetectionLegacy.ts)
   implements fast/exact duplicate detection.
 - [`largeVideoDetection.ts`](../src/services/largeVideoDetection.ts)
