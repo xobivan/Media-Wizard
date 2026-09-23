@@ -163,21 +163,26 @@ During the metadata grouping phase, the scanner yields control to the JS event l
 
 ## 7. Deep photo matching: Native DCT pHash
 
-Photo duplicate detection is powered by an Android local Expo native module ([`modules/thumbnail-signatures`](../modules/thumbnail-signatures)).
+Photo duplicate detection is powered by a local Expo native module ([`modules/thumbnail-signatures`](../modules/thumbnail-signatures)) implemented in Kotlin (Android) and Swift (iOS). Both implementations share the same algorithm and produce the same 64-bit pHash string for the same image.
 
 ### Pipeline & Native Execution
 1. **Bulk Batching**: Candidate photo URIs are collected into bulk arrays and passed to `getNativePhotoSignatures` in 50-item batches, eliminating 5,400+ JS-to-Native bridge roundtrips.
-2. **Native Hardware Downsampling**: The native module decodes thumbnails at $128 \times 128$ via `ContentResolver.loadThumbnail` for MediaStore URIs or fast `BitmapFactory.decodeFile` with `inSampleSize = 8` for `file://` URIs, preventing full 12–50MP images from bloating RAM.
-3. **Pre-computed Cosine Lookup Table**: A static $8 \times 32$ `COS_TABLE` replaces live `Math.cos()` trigonometric calls with instant array lookups.
-4. **Multi-Threaded Coroutines (`Dispatchers.IO`)**: Thumbnail decoding and pHash generation run concurrently across all CPU cores on the device using Kotlin coroutines (`runBlocking` + `async(Dispatchers.IO)`).
-5. **64-bit DCT Perceptual Hash (pHash)**: The module reduces the thumbnail to a 32x32 luminance matrix and computes a 64-bit Discrete Cosine Transform (DCT) pHash string.
+2. **Native Hardware Downsampling**:
+   - **Android**: `ContentResolver.loadThumbnail` for MediaStore (`content://`) URIs; `BitmapFactory.decodeFile` with `inSampleSize = 8` for `file://` URIs. Produces a 128×128 thumbnail without decoding the full 12–50 MP source.
+   - **iOS**: `PHImageManager.requestImage(targetSize: 128×128, deliveryMode: .fastFormat)` for `ph://` Photo Library URIs; `UIImage` + `UIGraphicsImageRenderer` downsample for `file://` URIs.
+3. **Pre-computed Cosine Lookup Table**: A static 8×32 `COS_TABLE` replaces live `cos()` trigonometric calls with instant array lookups. Identical formula on both platforms.
+4. **Multi-Threaded Concurrency**:
+   - **Android**: Kotlin `async(Dispatchers.IO)` coroutines inside `runBlocking` — parallelises across all CPU cores.
+   - **iOS**: `DispatchQueue.global(qos: .userInitiated)` + `DispatchGroup` — equivalent parallelism on Apple hardware.
+5. **64-bit DCT Perceptual Hash (pHash)**: The module reduces the thumbnail to a 32×32 luminance matrix (BT.601 weights) and computes a 64-bit Discrete Cosine Transform (DCT) pHash string using the top-left 8×8 AC coefficients thresholded by their median.
 
 ### Matching Behavior & Tradeoffs
 - **Re-encode & Compression Detection**: Because pHash matches visual frequency structures (low-frequency luminance patterns) rather than exact PNG bytes, it successfully groups re-encoded JPEGs, social media downloads (WhatsApp/Instagram), and resized copies.
 - **Boundary Tradeoff**: In rare cases, photos that are visually nearly identical (such as consecutive burst shots with minimal subject movement) may share the same 64-bit pHash key and be flagged as duplicates.
 
 ### Fallback
-If the native module is unavailable or a file fails native decoding, `duplicateDetection.ts` falls back to `normalizedPhotoFingerprint` (`expo-image-manipulator` resize to 64x64 PNG MD5) or streaming file MD5 hashing so individual unsupported files never fail the scan.
+If the native module is unavailable or a file fails native decoding, `duplicateDetection.ts` falls back to `normalizedPhotoFingerprint` (`expo-image-manipulator` resize to 64×64 PNG MD5) or streaming file MD5 hashing so individual unsupported files never fail the scan.
+
 
 ## 8. Deep video matching
 

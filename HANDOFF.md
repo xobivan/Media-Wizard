@@ -142,6 +142,13 @@ For iOS, use:
 npx expo run:ios
 ```
 
+The local `modules/thumbnail-signatures` module now contains both:
+
+- `android/` — Kotlin implementation (`ThumbnailSignaturesModule.kt`).
+- `ios/` — Swift implementation (`ThumbnailSignaturesModule.swift`).
+
+Any development client built before the Swift file was added must be rebuilt with `npx expo run:ios`.
+
 ## Known limitations
 
 1. Deep scan is expensive.
