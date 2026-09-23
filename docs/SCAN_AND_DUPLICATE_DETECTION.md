@@ -105,6 +105,16 @@ For every candidate:
 3. If MD5 is unavailable or reading fails, use:
 
 ```text
+
+### Fingerprinting
+
+For every candidate:
+
+1. Resolve the local file.
+2. Use the native file MD5 when available.
+3. If MD5 is unavailable or reading fails, use:
+
+```text
 filename : size : duration : width : height
 ```
 
@@ -119,10 +129,9 @@ than two assets are removed.
   re-encoded.
 - The metadata fallback is less authoritative than a content hash.
 
-## 6. Deep scan: normalized fingerprints
+## 6. Deep scan: candidate grouping & native execution
 
-Implemented by
-[`duplicateDetection.ts`](../src/services/duplicateDetection.ts).
+Implemented by [`duplicateDetection.ts`](../src/services/duplicateDetection.ts).
 
 ### Candidate grouping
 
@@ -131,8 +140,10 @@ The first pass reads each file's size and uses:
 For photos:
 
 ```text
-photo : width : height
+photo : width : height : sizeBucket
 ```
+
+A coarse logarithmic size bucket (`Math.floor(Math.log2(size))`) eliminates implausible candidate pairs while ensuring re-encoded images with nearby sizes remain candidate duplicates.
 
 For videos:
 
@@ -140,42 +151,40 @@ For videos:
 video : reduced aspect ratio : rounded duration
 ```
 
-Unlike fast scan, file size is not part of the candidate key. Reducing an
+Unlike fast scan, exact file size is not part of the candidate key. Reducing an
 aspect ratio (for example, `1920:1080` and `1280:720` both become `16:9`)
 allows Deep Scan to compare differently encoded or resized videos that retain
-the same framing and approximate duration. The subsequent frame fingerprint
-verification remains unchanged.
+the same framing and approximate duration.
 
-## 7. Deep photo matching
+### Event loop yielding & cancellation checks
+During the metadata grouping phase, the scanner yields control to the JS event loop every 100 items (`await new Promise(r => setTimeout(r, 0))`). This keeps the main React Native UI thread responsive, ensures progress bar updates render smoothly and gradually, and allows user cancellation ("Abort Scan") to register instantly within milliseconds.
 
-For every candidate photo:
+---
 
-1. Resolve the source file.
-2. Resize it to 64 x 64 with `expo-image-manipulator`.
-3. Render and save the normalized image as PNG.
-4. Use the normalized file's MD5, or SHA-256 of its Base64 content.
-5. Group photos with the same normalized fingerprint.
-6. Delete the temporary normalized file.
+## 7. Deep photo matching: Native DCT pHash
 
-Normalization reduces the effect of source resolution and encoding differences.
-It is intended to find visually equivalent photos that do not have identical
-source bytes.
+Photo duplicate detection is powered by a local Expo native module ([`modules/thumbnail-signatures`](../modules/thumbnail-signatures)) implemented in Kotlin (Android) and Swift (iOS). Both implementations share the same algorithm and produce the same 64-bit pHash string for the same image.
 
-If image manipulation fails:
+### Pipeline & Native Execution
+1. **Bulk Batching**: Candidate photo URIs are collected into bulk arrays and passed to `getNativePhotoSignatures` in 50-item batches, eliminating 5,400+ JS-to-Native bridge roundtrips.
+2. **Native Hardware Downsampling**:
+   - **Android**: `ContentResolver.loadThumbnail` for MediaStore (`content://`) URIs; `BitmapFactory.decodeFile` with `inSampleSize = 8` for `file://` URIs. Produces a 128×128 thumbnail without decoding the full 12–50 MP source.
+   - **iOS**: `PHImageManager.requestImage(targetSize: 128×128, deliveryMode: .fastFormat)` for `ph://` Photo Library URIs; `UIImage` + `UIGraphicsImageRenderer` downsample for `file://` URIs.
+3. **Pre-computed Cosine Lookup Table**: A static 8×32 `COS_TABLE` replaces live `cos()` trigonometric calls with instant array lookups. Identical formula on both platforms.
+4. **Multi-Threaded Concurrency**:
+   - **Android**: Kotlin `async(Dispatchers.IO)` coroutines inside `runBlocking` — parallelises across all CPU cores.
+   - **iOS**: `DispatchQueue.global(qos: .userInitiated)` + `DispatchGroup` — equivalent parallelism on Apple hardware.
+5. **64-bit DCT Perceptual Hash (pHash)**: The module reduces the thumbnail to a 32×32 luminance matrix (BT.601 weights) and computes a 64-bit Discrete Cosine Transform (DCT) pHash string using the top-left 8×8 AC coefficients thresholded by their median.
 
-1. Try the source file MD5.
-2. If that fails, use:
+### Matching Behavior & Tradeoffs
+- **Re-encode & Compression Detection**: Because pHash matches visual frequency structures (low-frequency luminance patterns) rather than exact PNG bytes, it successfully groups re-encoded JPEGs, social media downloads (WhatsApp/Instagram), and resized copies.
+- **Boundary Tradeoff**: In rare cases, photos that are visually nearly identical (such as consecutive burst shots with minimal subject movement) may share the same 64-bit pHash key and be flagged as duplicates.
 
-```text
-filename : duration : width : height
-```
+### Fallback
+If the native module is unavailable or a file fails native decoding, `duplicateDetection.ts` falls back to `normalizedPhotoFingerprint` (`expo-image-manipulator` resize to 64×64 PNG MD5) or streaming file MD5 hashing so individual unsupported files never fail the scan.
 
-This fallback keeps one unsupported image from aborting the whole scan, but it
-is less reliable than normalized content matching.
 
 ## 8. Deep video matching
-
-For every candidate video:
 
 1. Resolve the source file.
 2. Create an `expo-video` player.

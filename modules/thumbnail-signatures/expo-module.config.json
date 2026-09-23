@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "ios"],
+  "android": {
+    "modules": ["com.mediawizard.thumbnailsignatures.ThumbnailSignaturesModule"]
+  },
+  "ios": {
+    "modules": ["ThumbnailSignaturesModule"]
+  }
+}
