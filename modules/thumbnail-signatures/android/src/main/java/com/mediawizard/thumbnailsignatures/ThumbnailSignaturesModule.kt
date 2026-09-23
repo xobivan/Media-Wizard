@@ -1,5 +1,6 @@
 package com.mediawizard.thumbnailsignatures
 
+import android.media.MediaMetadataRetriever
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Base64
@@ -40,6 +41,52 @@ class ThumbnailSignaturesModule : Module() {
                 createSignature(uriString, thumbnail)
               } finally {
                 thumbnail.recycle()
+              }
+            } catch (error: Exception) {
+              mapOf("uri" to uriString, "error" to (error.message ?: error.javaClass.simpleName))
+            }
+          }
+        }.map { it.await() }
+      }
+    }
+
+    AsyncFunction("getVideoFrameSignatures") { uris: List<String>, frameTimes: List<List<Double>> ->
+      val resolver = requireNotNull(appContext.reactContext).contentResolver
+      runBlocking {
+        uris.mapIndexed { index, uriString ->
+          async(Dispatchers.IO) {
+            try {
+              val retriever = MediaMetadataRetriever()
+              try {
+                val parsedUri = Uri.parse(uriString)
+                if (parsedUri.scheme == "file") {
+                  retriever.setDataSource(parsedUri.path)
+                } else {
+                  val pfd = resolver.openFileDescriptor(parsedUri, "r")
+                    ?: throw IllegalArgumentException("Could not open file descriptor for $uriString")
+                  pfd.use {
+                    retriever.setDataSource(it.fileDescriptor)
+                  }
+                }
+
+                val times = frameTimes[index]
+                val hashes = times.map { timeSec ->
+                  val timeUs = (timeSec * 1_000_000).toLong()
+                  val frame = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: throw IllegalStateException("No frame at ${timeSec}s for $uriString")
+                  try {
+                    val signature = createSignature(uriString, frame)
+                    signature["pHash"] as String
+                  } finally {
+                    frame.recycle()
+                  }
+                }
+
+                mapOf("uri" to uriString, "frameHashes" to hashes)
+              } finally {
+                try {
+                  retriever.release()
+                } catch (_: Exception) {}
               }
             } catch (error: Exception) {
               mapOf("uri" to uriString, "error" to (error.message ?: error.javaClass.simpleName))
