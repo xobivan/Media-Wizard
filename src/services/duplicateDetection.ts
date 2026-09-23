@@ -5,7 +5,11 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import { createVideoPlayer, type VideoThumbnail } from 'expo-video';
 import { getMediaFile } from './mediaAssetFile';
 import { count, timed, timedSync } from './scanProfiler';
-import { getNativePhotoSignatures, isNativeThumbnailSignaturesAvailable } from './nativeThumbnailSignatures';
+import {
+  getNativePhotoSignatures,
+  getNativeVideoFrameSignatures,
+  isNativeThumbnailSignaturesAvailable,
+} from './nativeThumbnailSignatures';
 
 export type DuplicateAsset = MediaLibrary.Asset & {
   fingerprint: string;
@@ -135,24 +139,54 @@ export async function findDuplicateGroups(
     if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
   }
 
-  const inFlightVideos = new Set<Promise<void>>();
-  try {
+  // --- Pass 1: Video First-Frame Fingerprinting ---
+  if (isNativeThumbnailSignaturesAvailable() && videoCandidates.length > 0) {
+    const videoUris = videoCandidates.map((c) => c.asset.uri);
+    const firstFrameTimes = videoCandidates.map((c) => [getVideoFrameTimes(c.asset)[0]]);
+    const signatures = await timed('deep.video-first-frame.native-batch', () => (
+      getNativeVideoFrameSignatures(videoUris, firstFrameTimes, (completedCount) => {
+        onProgress?.(50 + Math.round((completedCount / candidates.length) * 25));
+      })
+    ));
+
+    const sigMap = new Map<string, string>();
+    for (const sig of signatures) {
+      if (sig.frameHashes && sig.frameHashes.length > 0) {
+        sigMap.set(sig.uri, sig.frameHashes[0]);
+      }
+    }
+
     for (const candidate of videoCandidates) {
-      let tracked: Promise<void>;
-      tracked = (async () => {
-        const firstFrameFingerprint = await timed('deep.video-first-frame.total', () => (
+      const pHash = sigMap.get(candidate.asset.uri);
+      if (pHash) {
+        videoFirstFrameResults.push({ candidate, firstFrameFingerprint: pHash });
+      } else {
+        const fallback = await timed('deep.video-first-frame.total', () => (
           getVideoFirstFrameFingerprint(candidate.asset)
         ));
-        videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
-      })().finally(() => inFlightVideos.delete(tracked));
-      inFlightVideos.add(tracked);
-
-      if (inFlightVideos.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideos);
+        videoFirstFrameResults.push({ candidate, firstFrameFingerprint: fallback });
+      }
     }
-    if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
-  } catch (error) {
-    await Promise.allSettled(inFlightVideos);
-    throw error;
+  } else {
+    const inFlightVideos = new Set<Promise<void>>();
+    try {
+      for (const candidate of videoCandidates) {
+        let tracked: Promise<void>;
+        tracked = (async () => {
+          const firstFrameFingerprint = await timed('deep.video-first-frame.total', () => (
+            getVideoFirstFrameFingerprint(candidate.asset)
+          ));
+          videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
+        })().finally(() => inFlightVideos.delete(tracked));
+        inFlightVideos.add(tracked);
+
+        if (inFlightVideos.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideos);
+      }
+      if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
+    } catch (error) {
+      await Promise.allSettled(inFlightVideos);
+      throw error;
+    }
   }
 
   const videosByFirstFrame = new Map<string, { candidate: Candidate; firstFrameFingerprint: string }[]>();
@@ -162,17 +196,54 @@ export async function findDuplicateGroups(
     videosByFirstFrame.set(result.firstFrameFingerprint, group);
   }
 
-  const inFlightVideoFull = new Set<Promise<void>>();
-  try {
-    for (const group of videosByFirstFrame.values()) {
-      if (group.length === 1) {
-        // No other video shares this first frame, so it cannot collide with anything under the
-        // three-frame fingerprint either — record it directly without extracting more frames.
-        recordFingerprint(group[0].candidate, group[0].firstFrameFingerprint);
-        continue;
-      }
+  // --- Pass 2: Video Mid+End Frame Fingerprinting for Collisions ---
+  const collidingCandidates: { candidate: Candidate; firstFramePHash: string }[] = [];
+  for (const group of videosByFirstFrame.values()) {
+    if (group.length === 1) {
+      // No other video shares this first frame, so it cannot collide with anything under the
+      // three-frame fingerprint either — record it directly without extracting more frames.
+      recordFingerprint(group[0].candidate, group[0].firstFrameFingerprint);
+      continue;
+    }
 
-      for (const { candidate } of group) {
+    for (const entry of group) {
+      collidingCandidates.push({ candidate: entry.candidate, firstFramePHash: entry.firstFrameFingerprint });
+    }
+  }
+
+  if (isNativeThumbnailSignaturesAvailable() && collidingCandidates.length > 0) {
+    const collidingUris = collidingCandidates.map((c) => c.candidate.asset.uri);
+    const remainingFrameTimes = collidingCandidates.map((c) => {
+      const [, ...rest] = getVideoFrameTimes(c.candidate.asset);
+      return rest;
+    });
+
+    const signatures = await timed('deep.video-full-fingerprint.native-batch', () => (
+      getNativeVideoFrameSignatures(collidingUris, remainingFrameTimes, (completedCount) => {
+        onProgress?.(75 + Math.round((completedCount / candidates.length) * 25));
+      })
+    ));
+
+    const sigMap = new Map<string, string[]>();
+    for (const sig of signatures) {
+      if (sig.frameHashes) {
+        sigMap.set(sig.uri, sig.frameHashes);
+      }
+    }
+
+    for (const { candidate, firstFramePHash } of collidingCandidates) {
+      const remainingHashes = sigMap.get(candidate.asset.uri);
+      if (remainingHashes && remainingHashes.length > 0) {
+        recordFingerprint(candidate, [firstFramePHash, ...remainingHashes].join(':'));
+      } else {
+        const fallback = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
+        recordFingerprint(candidate, fallback);
+      }
+    }
+  } else {
+    const inFlightVideoFull = new Set<Promise<void>>();
+    try {
+      for (const { candidate } of collidingCandidates) {
         let tracked: Promise<void>;
         tracked = (async () => {
           const fingerprint = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
@@ -182,12 +253,13 @@ export async function findDuplicateGroups(
 
         if (inFlightVideoFull.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideoFull);
       }
+      if (inFlightVideoFull.size > 0) await Promise.all(inFlightVideoFull);
+    } catch (error) {
+      await Promise.allSettled(inFlightVideoFull);
+      throw error;
     }
-    if (inFlightVideoFull.size > 0) await Promise.all(inFlightVideoFull);
-  } catch (error) {
-    await Promise.allSettled(inFlightVideoFull);
-    throw error;
   }
+
 
   async function getPhotoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
     try {
