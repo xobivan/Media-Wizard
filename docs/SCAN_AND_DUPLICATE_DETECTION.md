@@ -184,21 +184,30 @@ Photo duplicate detection is powered by a local Expo native module ([`modules/th
 If the native module is unavailable or a file fails native decoding, `duplicateDetection.ts` falls back to `normalizedPhotoFingerprint` (`expo-image-manipulator` resize to 64×64 PNG MD5) or streaming file MD5 hashing so individual unsupported files never fail the scan.
 
 
-## 8. Deep video matching
+## 8. Deep video matching: Native DCT pHash
 
-1. Resolve the source file.
-2. Create an `expo-video` player.
-3. Choose up to three timestamps:
-   - `0.1` seconds
-   - Middle of the video
-   - `duration - 0.1` seconds
-4. Generate thumbnails at those timestamps, capped at 64 x 64.
-5. Normalize each thumbnail to PNG.
-6. Hash each thumbnail with MD5 or SHA-256.
-7. Join the frame hashes with `:` to form one video fingerprint.
-8. Release the native player in `finally`.
+Video duplicate detection is integrated into the local Expo native module ([`modules/thumbnail-signatures`](../modules/thumbnail-signatures)) in Kotlin (Android) and Swift (iOS).
 
-Videos with the same sequence of sampled frame hashes become one group.
+### Pipeline & Native Execution
+1. **Pass 1 (First-frame prefilter)**: Candidate video URIs are passed to `getNativeVideoFrameSignatures` to extract only the first frame timestamp (`0.1s`).
+   - **Android**: Uses `MediaMetadataRetriever` with `OPTION_CLOSEST_SYNC`.
+   - **iOS**: Resolves `ph://` URIs via `PHImageManager.default().requestAVAsset` and uses `AVAssetImageGenerator` capped at 128×128.
+   - Computes a 64-bit DCT perceptual hash (pHash) directly in native background threads (`Dispatchers.IO` on Android, `DispatchQueue.global` on iOS).
+2. **Pass 2 (Collisions only)**: Candidates with colliding first-frame pHashes trigger native extraction for remaining timestamps (middle and end of video).
+3. **Fingerprint construction**: Combines hashes into `pHash1:pHash2:pHash3`. Videos with unique first frames skip Pass 2 entirely.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### Video fallback
 

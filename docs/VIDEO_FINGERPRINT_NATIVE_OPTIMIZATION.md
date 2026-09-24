@@ -449,11 +449,17 @@ After this optimization, **photo fingerprinting (81s / 94s)** becomes the domina
    - **Pass 2**: For first-frame collisions, batch-dispatches native requests for mid + end frames wrapped under `deep.video-full-fingerprint.native-batch` and prepends the Pass 1 pHash.
    - **Fallback**: Retains existing JS `expo-video` player path for URIs that fail native extraction.
 
+### iOS Implementation (Completed)
+1. **Swift Native Module (`ThumbnailSignaturesModule.swift`)**: Added matching `AsyncFunction("getVideoFrameSignatures")` using `AVFoundation` (`AVAssetImageGenerator`).
+2. **`ph://` Asset Resolution**: Added `resolveVideoURL` helper using `PHImageManager.default().requestAVAsset` (`isNetworkAccessAllowed = false`) to resolve iOS Photo Library video assets to local file URLs.
+3. **Native pHash & Multi-threading**: Uses `AVAssetImageGenerator` with `maximumSize = CGSize(128, 128)`, downsampling to 32×32 grayscale, and computing the identical 64-bit DCT perceptual hash in parallel across background queues via `DispatchQueue.global(qos: .userInitiated)` and `DispatchGroup`.
+
 ### Benchmarking Metrics
 In dev builds (`__DEV__`), inspect `[ScanProfile]` log output for the following labels to verify native video execution:
 - `deep.video-first-frame.native-batch`: Total time taken for native Pass 1 first-frame extraction & pHash computation.
 - `deep.video-full-fingerprint.native-batch`: Total time taken for native Pass 2 mid+end frame extraction on colliding candidate videos.
 - `deep.video-first-frame.total` / `deep.video-fingerprint.total`: Time spent in fallback JS path (should show 0 count if all videos succeed natively).
+
 
 ---
 
