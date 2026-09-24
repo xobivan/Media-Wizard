@@ -1,3 +1,4 @@
+import AVFoundation
 import ExpoModulesCore
 import Photos
 import UIKit
@@ -12,8 +13,8 @@ import UIKit
  *
  * Supported URI schemes
  * ─────────────────────
- *   ph://   — iOS Photo Library asset (resolved via PHImageManager)
- *   file:// — on-disk file (resolved via UIImage + UIGraphicsImageRenderer downsample)
+ *   ph://   — iOS Photo Library asset (resolved via PHImageManager / PHAssetResource / AVAsset)
+ *   file:// — on-disk file (resolved via UIImage / AVAssetImageGenerator)
  *   /…      — bare absolute path (treated identically to file://)
  *
  * Return shape per URI (matches the Android module and the TypeScript NativeThumbnailSignature type)
@@ -67,7 +68,96 @@ public class ThumbnailSignaturesModule: Module {
         promise.resolve(results.compactMap { $0 })
       }
     }
+
+    AsyncFunction("getVideoFrameSignatures") { (uris: [String], frameTimes: [[Double]], promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        let group = DispatchGroup()
+        var results = [[String: Any]?](repeating: nil, count: uris.count)
+        let lock = NSLock()
+
+        for (index, uri) in uris.enumerated() {
+          group.enter()
+          let times = frameTimes[index]
+          DispatchQueue.global(qos: .userInitiated).async {
+            let entry = Self.processVideoURI(uri, frameTimes: times)
+            lock.lock()
+            results[index] = entry
+            lock.unlock()
+            group.leave()
+          }
+        }
+
+        group.wait()
+        promise.resolve(results.compactMap { $0 })
+      }
+    }
   }
+
+  // MARK: - Per-Video orchestration
+
+  private static func processVideoURI(_ uri: String, frameTimes: [Double]) -> [String: Any] {
+    let urlResult = resolveVideoURL(for: uri)
+    guard let url = urlResult.url else {
+      return ["uri": uri, "error": urlResult.error ?? "Failed to resolve video URL"]
+    }
+
+    let asset = AVAsset(url: url)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: 128, height: 128)
+
+    var frameHashes: [String] = []
+    for timeSec in frameTimes {
+      let cmTime = CMTime(seconds: timeSec, preferredTimescale: 600)
+      do {
+        let cgImage = try generator.copyCGImage(at: cmTime, actualTime: nil)
+        let uiImage = UIImage(cgImage: cgImage)
+        let signature = createSignature(uri: uri, image: uiImage)
+        guard let pHash = signature["pHash"] as? String else {
+          return ["uri": uri, "error": "Failed pHash for time \(timeSec)s"]
+        }
+        frameHashes.append(pHash)
+      } catch {
+        return ["uri": uri, "error": error.localizedDescription]
+      }
+    }
+
+    return ["uri": uri, "frameHashes": frameHashes]
+  }
+
+  private static func resolveVideoURL(for uri: String) -> (url: URL?, error: String?) {
+    if uri.hasPrefix("ph://") {
+      let localIdentifier = String(uri.dropFirst("ph://".count))
+      let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+      guard let phAsset = fetchResult.firstObject else {
+        return (nil, "Could not find PHAsset for identifier \(localIdentifier)")
+      }
+
+      var resolvedURL: URL?
+      let semaphore = DispatchSemaphore(value: 0)
+
+      let options = PHVideoRequestOptions()
+      options.isNetworkAccessAllowed = false
+      options.deliveryMode = .fastFormat
+
+      PHImageManager.default().requestAVAsset(forVideo: phAsset, options: options) { avAsset, _, _ in
+        if let urlAsset = avAsset as? AVURLAsset {
+          resolvedURL = urlAsset.url
+        }
+        semaphore.signal()
+      }
+      _ = semaphore.wait(timeout: .now() + 5.0)
+
+      if let url = resolvedURL {
+        return (url, nil)
+      }
+      return (nil, "Failed to resolve local video URL for ph:// asset")
+    }
+
+    let path = uri.hasPrefix("file://") ? String(uri.dropFirst("file://".count)) : uri
+    return (URL(fileURLWithPath: path), nil)
+  }
+
 
   // MARK: - Per-URI orchestration
 
