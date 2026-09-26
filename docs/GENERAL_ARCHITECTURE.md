@@ -38,7 +38,7 @@ compression algorithms.
 
 - [`duplicateDetection.ts`](../src/services/duplicateDetection.ts) implements
   deep duplicate detection, coordinating native DCT pHash thumbnail signatures and JS fallbacks.
-- [`modules/thumbnail-signatures`](../modules/thumbnail-signatures) local Expo native module providing hardware-downsampled thumbnails and 64-bit DCT perceptual hash (pHash) generation. Implemented in Kotlin for Android (`android/`) and Swift for iOS (`ios/`). Both implementations share the same algorithm and return the same pHash string for the same image.
+- [`modules/thumbnail-signatures`](../modules/thumbnail-signatures) local Expo native module providing hardware-downsampled thumbnail and video frame 64-bit DCT perceptual hash (pHash) generation. Implemented in Kotlin for Android (`android/`) using `MediaMetadataRetriever` and Swift for iOS (`ios/`) using `AVAssetImageGenerator`. Both implementations share the same algorithm and return identical pHash strings across platforms for photos and video frames.
 - [`nativeThumbnailSignatures.ts`](../src/services/nativeThumbnailSignatures.ts) TypeScript interface layer for batching thumbnail signature calls to the native module.
 - [`duplicateDetectionLegacy.ts`](../src/services/duplicateDetectionLegacy.ts)
   implements fast/exact duplicate detection.

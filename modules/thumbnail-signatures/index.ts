@@ -17,7 +17,27 @@ export type NativeThumbnailSignature = NativeThumbnailSignatureSuccess | NativeT
 
 export interface ThumbnailSignaturesModule {
   getPhotoSignatures(uris: string[]): Promise<NativeThumbnailSignature[]>;
+  getVideoFrameSignatures(uris: string[], frameTimes: number[][]): Promise<NativeVideoFrameSignature[]>;
 }
+
+export type NativeVideoFrameSignatureSuccess = {
+  uri: string;
+  frameHashes: string[];
+  /** True when the video file is offloaded to iCloud and the hash was computed from the
+   *  locally-cached poster frame rather than an actual decoded video frame. Pass 2
+   *  (mid/end-frame extraction) must be skipped for these assets. */
+  isICloudOffloaded?: boolean;
+  error?: undefined;
+};
+
+export type NativeVideoFrameSignatureError = {
+  uri: string;
+  error: string;
+};
+
+export type NativeVideoFrameSignature =
+  | NativeVideoFrameSignatureSuccess
+  | NativeVideoFrameSignatureError;
 
 const nativeModule = requireOptionalNativeModule<ThumbnailSignaturesModule>('ThumbnailSignatures');
 
@@ -33,3 +53,14 @@ export async function getPhotoSignatures(uris: string[]): Promise<NativeThumbnai
   }
   return nativeModule.getPhotoSignatures(uris);
 }
+
+export async function getVideoFrameSignatures(
+  uris: string[],
+  frameTimes: number[][],
+): Promise<NativeVideoFrameSignature[]> {
+  if (!nativeModule) {
+    throw new Error('ThumbnailSignatures native module is not available.');
+  }
+  return nativeModule.getVideoFrameSignatures(uris, frameTimes);
+}
+

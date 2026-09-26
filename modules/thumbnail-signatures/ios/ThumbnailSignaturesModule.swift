@@ -1,3 +1,4 @@
+import AVFoundation
 import ExpoModulesCore
 import Photos
 import UIKit
@@ -12,8 +13,8 @@ import UIKit
  *
  * Supported URI schemes
  * ─────────────────────
- *   ph://   — iOS Photo Library asset (resolved via PHImageManager)
- *   file:// — on-disk file (resolved via UIImage + UIGraphicsImageRenderer downsample)
+ *   ph://   — iOS Photo Library asset (resolved via PHImageManager / PHAssetResource / AVAsset)
+ *   file:// — on-disk file (resolved via UIImage / AVAssetImageGenerator)
  *   /…      — bare absolute path (treated identically to file://)
  *
  * Return shape per URI (matches the Android module and the TypeScript NativeThumbnailSignature type)
@@ -67,7 +68,136 @@ public class ThumbnailSignaturesModule: Module {
         promise.resolve(results.compactMap { $0 })
       }
     }
+
+    AsyncFunction("getVideoFrameSignatures") { (uris: [String], frameTimes: [[Double]], promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        let group = DispatchGroup()
+        var results = [[String: Any]?](repeating: nil, count: uris.count)
+        let lock = NSLock()
+
+        for (index, uri) in uris.enumerated() {
+          group.enter()
+          let times = frameTimes[index]
+          DispatchQueue.global(qos: .userInitiated).async {
+            let entry = Self.processVideoURI(uri, frameTimes: times)
+            lock.lock()
+            results[index] = entry
+            lock.unlock()
+            group.leave()
+          }
+        }
+
+        group.wait()
+        promise.resolve(results.compactMap { $0 })
+      }
+    }
   }
+
+  // MARK: - Per-Video orchestration
+
+  private static func processVideoURI(_ uri: String, frameTimes: [Double]) -> [String: Any] {
+    // --- Pass 1: try the local video file via AVAssetImageGenerator ---
+    if let url = requestLocalAVAssetURL(for: uri) {
+      let asset = AVAsset(url: url)
+      let generator = AVAssetImageGenerator(asset: asset)
+      generator.appliesPreferredTrackTransform = true
+      generator.maximumSize = CGSize(width: 128, height: 128)
+
+      var frameHashes: [String] = []
+      for timeSec in frameTimes {
+        let cmTime = CMTime(seconds: timeSec, preferredTimescale: 600)
+        do {
+          let cgImage = try generator.copyCGImage(at: cmTime, actualTime: nil)
+          let uiImage = UIImage(cgImage: cgImage)
+          let signature = createSignature(uri: uri, image: uiImage)
+          guard let pHash = signature["pHash"] as? String else {
+            return ["uri": uri, "error": "Failed pHash for time \(timeSec)s"]
+          }
+          frameHashes.append(pHash)
+        } catch {
+          return ["uri": uri, "error": error.localizedDescription]
+        }
+      }
+      return ["uri": uri, "frameHashes": frameHashes, "isICloudOffloaded": false]
+    }
+
+    // --- Pass 1 fallback: video file is offloaded to iCloud — use local poster frame ---
+    //
+    // iOS always retains a locally-cached 128–360 px poster frame for every video in the
+    // Photo Library, even when the full .mov/.mp4 is offloaded ("Optimize iPhone Storage").
+    // Requesting it with isNetworkAccessAllowed = false + deliveryMode = .fastFormat returns
+    // that cached thumbnail instantly without triggering any network download.
+    //
+    // The resulting pHash is the same quality as a normal first-frame hash and is sufficient
+    // for Pass 1 (first-frame prefilter). JS marks this asset as isICloudOffloaded = true and
+    // skips it from Pass 2 (mid/end-frame extraction) to avoid a 30-second timeout.
+    if uri.hasPrefix("ph://") {
+      let localIdentifier = String(uri.dropFirst("ph://".count))
+      let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+      if let phAsset = fetchResult.firstObject,
+         let posterFrame = requestPosterFrame(for: phAsset) {
+        let signature = createSignature(uri: uri, image: posterFrame)
+        guard let pHash = signature["pHash"] as? String else {
+          return ["uri": uri, "error": "Failed pHash from poster frame"]
+        }
+        return ["uri": uri, "frameHashes": [pHash], "isICloudOffloaded": true]
+      }
+    }
+
+    return ["uri": uri, "error": "Failed to resolve local video URL — asset may be fully offloaded to iCloud"]
+  }
+
+  /// Attempts to resolve a local file URL for a `ph://` or `file://` video URI without
+  /// triggering any network download. Returns `nil` when the video is offloaded to iCloud.
+  private static func requestLocalAVAssetURL(for uri: String) -> URL? {
+    if uri.hasPrefix("ph://") {
+      let localIdentifier = String(uri.dropFirst("ph://".count))
+      let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+      guard let phAsset = fetchResult.firstObject else { return nil }
+
+      var resolvedURL: URL?
+      let semaphore = DispatchSemaphore(value: 0)
+
+      let options = PHVideoRequestOptions()
+      options.isNetworkAccessAllowed = false
+      options.deliveryMode = .fastFormat
+
+      PHImageManager.default().requestAVAsset(forVideo: phAsset, options: options) { avAsset, _, _ in
+        if let urlAsset = avAsset as? AVURLAsset {
+          resolvedURL = urlAsset.url
+        }
+        semaphore.signal()
+      }
+      _ = semaphore.wait(timeout: .now() + 5.0)
+      return resolvedURL
+    }
+
+    let path = uri.hasPrefix("file://") ? String(uri.dropFirst("file://".count)) : uri
+    return URL(fileURLWithPath: path)
+  }
+
+  /// Returns the locally-cached poster frame for a PHAsset whose video file is offloaded to
+  /// iCloud. Uses `deliveryMode = .fastFormat` and `isNetworkAccessAllowed = false` so this
+  /// never triggers a network download — it only reads from the on-device thumbnail cache.
+  private static func requestPosterFrame(for phAsset: PHAsset) -> UIImage? {
+    var posterFrame: UIImage?
+    let options = PHImageRequestOptions()
+    options.isSynchronous = true
+    options.deliveryMode = .fastFormat
+    options.resizeMode = .fast
+    options.isNetworkAccessAllowed = false
+
+    PHImageManager.default().requestImage(
+      for: phAsset,
+      targetSize: CGSize(width: 128, height: 128),
+      contentMode: .aspectFill,
+      options: options
+    ) { image, _ in
+      posterFrame = image
+    }
+    return posterFrame
+  }
+
 
   // MARK: - Per-URI orchestration
 

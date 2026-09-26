@@ -5,11 +5,19 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import { createVideoPlayer, type VideoThumbnail } from 'expo-video';
 import { getMediaFile } from './mediaAssetFile';
 import { count, timed, timedSync } from './scanProfiler';
-import { getNativePhotoSignatures, isNativeThumbnailSignaturesAvailable } from './nativeThumbnailSignatures';
+import {
+  getNativePhotoSignatures,
+  getNativeVideoFrameSignatures,
+  isNativeThumbnailSignaturesAvailable,
+} from './nativeThumbnailSignatures';
 
 export type DuplicateAsset = MediaLibrary.Asset & {
   fingerprint: string;
   size: number;
+  /** True when this video's fingerprint was computed from a local poster frame because the
+   *  full video file is offloaded to iCloud. The match is reliable for Pass 1 collisions
+   *  but mid/end-frame verification was skipped. */
+  isICloudOffloaded?: boolean;
 };
 
 export type DuplicateGroup = {
@@ -76,8 +84,8 @@ export async function findDuplicateGroups(
   const PHOTO_FINGERPRINT_CONCURRENCY = isNativeThumbnailSignaturesAvailable() ? 10 : 3;
   const VIDEO_FINGERPRINT_CONCURRENCY = 2;
   let completed = 0;
-  const recordFingerprint = (candidate: Candidate, fingerprint: string) => {
-    const duplicateAsset: DuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size };
+  const recordFingerprint = (candidate: Candidate, fingerprint: string, isICloudOffloaded?: boolean) => {
+    const duplicateAsset: DuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size, isICloudOffloaded };
     const group = groups.get(fingerprint) ?? [];
     group.push(duplicateAsset);
     groups.set(fingerprint, group);
@@ -93,7 +101,7 @@ export async function findDuplicateGroups(
   // actually collides with another video's. This keeps the final duplicate groups identical to
   // the old always-extract-three-frames approach while skipping most of the decoding work for
   // videos that can never match anything.
-  const videoFirstFrameResults: { candidate: Candidate; firstFrameFingerprint: string }[] = [];
+  const videoFirstFrameResults: { candidate: Candidate; firstFrameFingerprint: string; isICloudOffloaded?: boolean }[] = [];
 
   // Photo fingerprinting: Batch candidate photos together so native getNativePhotoSignatures processes
   // up to 100 URIs per single React Native bridge call, avoiding per-item JSI bridge overhead.
@@ -135,59 +143,143 @@ export async function findDuplicateGroups(
     if (inFlightPhotos.size > 0) await Promise.all(inFlightPhotos);
   }
 
-  const inFlightVideos = new Set<Promise<void>>();
-  try {
+  // --- Pass 1: Video First-Frame Fingerprinting ---
+  if (isNativeThumbnailSignaturesAvailable() && videoCandidates.length > 0) {
+    const videoUris = videoCandidates.map((c) => c.asset.uri);
+    const firstFrameTimes = videoCandidates.map((c) => [getVideoFrameTimes(c.asset)[0]]);
+    const signatures = await timed('deep.video-first-frame.native-batch', () => (
+      getNativeVideoFrameSignatures(videoUris, firstFrameTimes, (completedCount) => {
+        onProgress?.(50 + Math.round((completedCount / candidates.length) * 25));
+      })
+    ));
+
+    const sigMap = new Map<string, { pHash: string; isICloudOffloaded?: boolean }>();
+    for (const sig of signatures) {
+      if (sig.frameHashes && sig.frameHashes.length > 0) {
+        sigMap.set(sig.uri, { pHash: sig.frameHashes[0], isICloudOffloaded: sig.isICloudOffloaded });
+      }
+    }
+
     for (const candidate of videoCandidates) {
-      let tracked: Promise<void>;
-      tracked = (async () => {
-        const firstFrameFingerprint = await timed('deep.video-first-frame.total', () => (
+      const entry = sigMap.get(candidate.asset.uri);
+      if (entry) {
+        videoFirstFrameResults.push({ candidate, firstFrameFingerprint: entry.pHash, isICloudOffloaded: entry.isICloudOffloaded });
+      } else {
+        const fallback = await timed('deep.video-first-frame.total', () => (
           getVideoFirstFrameFingerprint(candidate.asset)
         ));
-        videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
-      })().finally(() => inFlightVideos.delete(tracked));
-      inFlightVideos.add(tracked);
-
-      if (inFlightVideos.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideos);
+        if (fallback !== null) {
+          videoFirstFrameResults.push({ candidate, firstFrameFingerprint: fallback });
+        }
+      }
     }
-    if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
-  } catch (error) {
-    await Promise.allSettled(inFlightVideos);
-    throw error;
+  } else {
+    const inFlightVideos = new Set<Promise<void>>();
+    try {
+      for (const candidate of videoCandidates) {
+        let tracked: Promise<void>;
+        tracked = (async () => {
+          const firstFrameFingerprint = await timed('deep.video-first-frame.total', () => (
+            getVideoFirstFrameFingerprint(candidate.asset)
+          ));
+          if (firstFrameFingerprint !== null) {
+            videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
+          }
+        })().finally(() => inFlightVideos.delete(tracked));
+        inFlightVideos.add(tracked);
+
+        if (inFlightVideos.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideos);
+      }
+      if (inFlightVideos.size > 0) await Promise.all(inFlightVideos);
+    } catch (error) {
+      await Promise.allSettled(inFlightVideos);
+      throw error;
+    }
   }
 
-  const videosByFirstFrame = new Map<string, { candidate: Candidate; firstFrameFingerprint: string }[]>();
+  const videosByFirstFrame = new Map<string, { candidate: Candidate; firstFrameFingerprint: string; isICloudOffloaded?: boolean }[]>();
   for (const result of videoFirstFrameResults) {
     const group = videosByFirstFrame.get(result.firstFrameFingerprint) ?? [];
     group.push(result);
     videosByFirstFrame.set(result.firstFrameFingerprint, group);
+
   }
 
-  const inFlightVideoFull = new Set<Promise<void>>();
-  try {
-    for (const group of videosByFirstFrame.values()) {
-      if (group.length === 1) {
-        // No other video shares this first frame, so it cannot collide with anything under the
-        // three-frame fingerprint either — record it directly without extracting more frames.
-        recordFingerprint(group[0].candidate, group[0].firstFrameFingerprint);
-        continue;
-      }
+  // --- Pass 2: Video Mid+End Frame Fingerprinting for Collisions ---
+  const collidingCandidates: { candidate: Candidate; firstFramePHash: string }[] = [];
+  for (const group of videosByFirstFrame.values()) {
+    if (group.length === 1) {
+      // No other video shares this first frame, so it cannot collide with anything under the
+      // three-frame fingerprint either — record it directly without extracting more frames.
+      recordFingerprint(group[0].candidate, group[0].firstFrameFingerprint, group[0].isICloudOffloaded);
+      continue;
+    }
 
-      for (const { candidate } of group) {
+    for (const entry of group) {
+      // iCloud-offloaded videos only have a poster-frame hash — the full video file is not on
+      // device, so Pass 2 (AVAssetImageGenerator on mid/end frames) would fail immediately
+      // with the same error as before. Record the poster-frame hash directly and skip Pass 2.
+      if (entry.isICloudOffloaded) {
+        recordFingerprint(entry.candidate, entry.firstFrameFingerprint, true);
+      } else {
+        collidingCandidates.push({ candidate: entry.candidate, firstFramePHash: entry.firstFrameFingerprint });
+      }
+    }
+  }
+
+  if (isNativeThumbnailSignaturesAvailable() && collidingCandidates.length > 0) {
+    const collidingUris = collidingCandidates.map((c) => c.candidate.asset.uri);
+    const remainingFrameTimes = collidingCandidates.map((c) => {
+      const [, ...rest] = getVideoFrameTimes(c.candidate.asset);
+      return rest;
+    });
+
+    const signatures = await timed('deep.video-full-fingerprint.native-batch', () => (
+      getNativeVideoFrameSignatures(collidingUris, remainingFrameTimes, (completedCount) => {
+        onProgress?.(75 + Math.round((completedCount / candidates.length) * 25));
+      })
+    ));
+
+    const sigMap = new Map<string, string[]>();
+    for (const sig of signatures) {
+      if (sig.frameHashes) {
+        sigMap.set(sig.uri, sig.frameHashes);
+      }
+    }
+
+    for (const { candidate, firstFramePHash } of collidingCandidates) {
+      const remainingHashes = sigMap.get(candidate.asset.uri);
+      if (remainingHashes && remainingHashes.length > 0) {
+        recordFingerprint(candidate, [firstFramePHash, ...remainingHashes].join(':'));
+      } else {
+        const fallback = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
+        if (fallback !== null) {
+          recordFingerprint(candidate, fallback);
+        }
+      }
+    }
+  } else {
+    const inFlightVideoFull = new Set<Promise<void>>();
+    try {
+      for (const { candidate } of collidingCandidates) {
         let tracked: Promise<void>;
         tracked = (async () => {
           const fingerprint = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
-          recordFingerprint(candidate, fingerprint);
+          if (fingerprint !== null) {
+            recordFingerprint(candidate, fingerprint);
+          }
         })().finally(() => inFlightVideoFull.delete(tracked));
         inFlightVideoFull.add(tracked);
 
         if (inFlightVideoFull.size >= VIDEO_FINGERPRINT_CONCURRENCY) await Promise.race(inFlightVideoFull);
       }
+      if (inFlightVideoFull.size > 0) await Promise.all(inFlightVideoFull);
+    } catch (error) {
+      await Promise.allSettled(inFlightVideoFull);
+      throw error;
     }
-    if (inFlightVideoFull.size > 0) await Promise.all(inFlightVideoFull);
-  } catch (error) {
-    await Promise.allSettled(inFlightVideoFull);
-    throw error;
   }
+
 
   async function getPhotoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
     try {
@@ -236,7 +328,7 @@ export async function findDuplicateGroups(
     return [asset.filename, asset.duration, asset.width, asset.height].join(':');
   }
 
-  async function getVideoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
+  async function getVideoFingerprint(asset: MediaLibrary.Asset): Promise<string | null> {
     // `createVideoPlayer` allocates a native decoder/player instance. Because we create one
     // per video while scanning a whole library, we must explicitly `release()` it in a
     // `finally` block — otherwise these native resources pile up across hundreds of videos
@@ -245,6 +337,11 @@ export async function findDuplicateGroups(
     let player: ReturnType<typeof createVideoPlayer> | null = null;
     try {
       const file = await timed('deep.video.get-media-file', () => getMediaFile(asset));
+      // The video file is not on disk (offloaded to iCloud, corrupted thumbnail, etc.).
+      // There is nothing to compare, so return null to signal the caller to skip this asset.
+      if (!file.uri || file.uri.startsWith('ph://')) {
+        return null;
+      }
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const times = getVideoFrameTimes(asset);
       const thumbnails = await timed('deep.video.thumbnail-extract', () => (
@@ -273,13 +370,19 @@ export async function findDuplicateGroups(
     }
   }
 
-  async function getVideoFirstFrameFingerprint(asset: MediaLibrary.Asset): Promise<string> {
+  async function getVideoFirstFrameFingerprint(asset: MediaLibrary.Asset): Promise<string | null> {
     // Same native decoder/player lifecycle as getVideoFingerprint, but only ever requests the
     // first of the three timestamps (`getVideoFrameTimes(asset)[0]`, always 0.1s), so its hash
     // is identical to the first component of the full three-frame fingerprint below.
     let player: ReturnType<typeof createVideoPlayer> | null = null;
     try {
       const file = await timed('deep.video.get-media-file', () => getMediaFile(asset));
+      // The video file is not on disk (offloaded to iCloud + poster frame also unavailable).
+      // There is nothing to compare, so return null to signal the caller to skip this asset
+      // entirely rather than recording a meaningless metadata fingerprint.
+      if (!file.uri || file.uri.startsWith('ph://')) {
+        return null;
+      }
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const [firstFrameTime] = getVideoFrameTimes(asset);
       const [thumbnail] = await timed('deep.video.first-frame-extract', () => (
