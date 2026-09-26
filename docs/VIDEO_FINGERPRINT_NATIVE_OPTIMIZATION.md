@@ -479,3 +479,55 @@ In dev builds (`__DEV__`), inspect `[ScanProfile]` log output for the following 
 - Spot-check known duplicate video pairs (same content, different resolutions/bitrates) are still detected
 - Spot-check that non-duplicate videos with similar first frames are correctly distinguished by the 3-frame fingerprint
 
+---
+
+## Future Proposal: Zero-Network iCloud Asset Optimization
+
+### Problem Statement
+When an iOS Photo or Video asset is offloaded to iCloud storage ("Optimize iPhone Storage" enabled):
+1. **Photos**: Full-resolution image is not stored on disk.
+2. **Videos**: The `.mov`/`.mp4` file is not on local storage, causing `requestAVAsset` to return `nil` when `isNetworkAccessAllowed = false`.
+3. **Current behavior**: Falling back to network downloads for large videos would cause high cellular data usage, slow scan times, and potential timeout crashes.
+
+### Proposed Architecture for Offloaded iCloud Assets
+
+#### 1. Photos: Local Cache Extraction via `PHImageManager`
+- **Mechanism**: iOS always retains a 128px–360px pre-rendered thumbnail in the local Photo Library database, even for offloaded iCloud photos.
+- **Proposed Change**:
+  In `ThumbnailSignaturesModule.swift`, configure `PHImageRequestOptions`:
+  ```swift
+  let options = PHImageRequestOptions()
+  options.isSynchronous = true
+  options.deliveryMode = .fastFormat     // Uses cached thumbnail directly
+  options.resizeMode = .fast
+  options.isNetworkAccessAllowed = false // Never triggers network download
+  ```
+- **Outcome**: Returns the 64-bit DCT pHash instantly from local disk cache without downloading the multi-megabyte photo from iCloud.
+
+#### 2. Videos (Pass 1 First-Frame): `PHImageManager` Poster Frame Fallback
+- **Mechanism**: For videos whose full `.mov`/`.mp4` file is offloaded to iCloud, `AVAssetImageGenerator` cannot open a file URL. However, `PHImageManager.default().requestImage` can retrieve the video's local **poster frame / thumbnail** cached on device.
+- **Proposed Change**:
+  When `requestAVAsset` returns `nil` for an offloaded `ph://` video URI:
+  ```swift
+  PHImageManager.default().requestImage(
+    for: phAsset,
+    targetSize: CGSize(width: 128, height: 128),
+    contentMode: .aspectFill,
+    options: photoOptions
+  ) { image, _ in
+    if let image = image {
+      let signature = createSignature(uri: uri, image: image)
+      // Return first-frame pHash from local poster frame
+    }
+  }
+  ```
+- **Outcome**: Allows Pass 1 (first-frame prefilter) to run instantly for **100% of iCloud videos** without downloading any video files over the network.
+
+#### 3. Videos (Pass 2 Mid/End Frames): On-Demand Progress & Network Gating
+- **Mechanism**: If two offloaded iCloud videos have colliding first-frame poster pHashes in Pass 1, Pass 2 needs middle/end frames.
+- **Proposed Strategy**:
+  1. Flag offloaded assets in JS scan results as `isICloudOffloaded: true`.
+  2. Skip automatic background network downloads of full video files during Deep Scan.
+  3. Offer user an optional button: *"Scan Offloaded iCloud Videos (requires downloading X MB)"*.
+
+
