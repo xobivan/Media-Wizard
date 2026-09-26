@@ -209,7 +209,12 @@ Video duplicate detection is integrated into the local Expo native module ([`mod
 
 
 
-### Video fallback
+### Offloaded iCloud Video Handling & Poster Frame Extraction
+- **Poster Frame Fallback**: For iOS video assets offloaded to iCloud storage, `requestAVAsset` fails when `isNetworkAccessAllowed = false`. The native Swift module automatically calls `requestPosterFrame`, which queries `PHImageManager` with `deliveryMode = .fastFormat` to extract the locally cached poster image without triggering a network download.
+- **Pass 2 Skip for iCloud Assets**: Assets processed via cached poster frames return `isICloudOffloaded: true`. If an offloaded video collides in Pass 1, `duplicateDetection.ts` records the poster pHash directly and skips Pass 2 frame extraction to prevent unnecessary decodes or network calls.
+- **Early Guard on Missing Local Files**: If an offloaded video fails native extraction and reaches JS fallbacks (`getVideoFirstFrameFingerprint` / `getVideoFingerprint`), the scanner detects that `file.uri` is an unresolved `ph://` reference and returns `null` immediately. This avoids allocating an `expo-video` player or waiting for 30-second timeouts.
+
+### Video Fallback
 
 If thumbnail generation or frame processing fails:
 
