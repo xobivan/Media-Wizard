@@ -14,6 +14,10 @@ import {
 export type DuplicateAsset = MediaLibrary.Asset & {
   fingerprint: string;
   size: number;
+  /** True when this video's fingerprint was computed from a local poster frame because the
+   *  full video file is offloaded to iCloud. The match is reliable for Pass 1 collisions
+   *  but mid/end-frame verification was skipped. */
+  isICloudOffloaded?: boolean;
 };
 
 export type DuplicateGroup = {
@@ -80,8 +84,8 @@ export async function findDuplicateGroups(
   const PHOTO_FINGERPRINT_CONCURRENCY = isNativeThumbnailSignaturesAvailable() ? 10 : 3;
   const VIDEO_FINGERPRINT_CONCURRENCY = 2;
   let completed = 0;
-  const recordFingerprint = (candidate: Candidate, fingerprint: string) => {
-    const duplicateAsset: DuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size };
+  const recordFingerprint = (candidate: Candidate, fingerprint: string, isICloudOffloaded?: boolean) => {
+    const duplicateAsset: DuplicateAsset = { ...candidate.asset, fingerprint, size: candidate.size, isICloudOffloaded };
     const group = groups.get(fingerprint) ?? [];
     group.push(duplicateAsset);
     groups.set(fingerprint, group);
@@ -97,7 +101,7 @@ export async function findDuplicateGroups(
   // actually collides with another video's. This keeps the final duplicate groups identical to
   // the old always-extract-three-frames approach while skipping most of the decoding work for
   // videos that can never match anything.
-  const videoFirstFrameResults: { candidate: Candidate; firstFrameFingerprint: string }[] = [];
+  const videoFirstFrameResults: { candidate: Candidate; firstFrameFingerprint: string; isICloudOffloaded?: boolean }[] = [];
 
   // Photo fingerprinting: Batch candidate photos together so native getNativePhotoSignatures processes
   // up to 100 URIs per single React Native bridge call, avoiding per-item JSI bridge overhead.
@@ -149,17 +153,17 @@ export async function findDuplicateGroups(
       })
     ));
 
-    const sigMap = new Map<string, string>();
+    const sigMap = new Map<string, { pHash: string; isICloudOffloaded?: boolean }>();
     for (const sig of signatures) {
       if (sig.frameHashes && sig.frameHashes.length > 0) {
-        sigMap.set(sig.uri, sig.frameHashes[0]);
+        sigMap.set(sig.uri, { pHash: sig.frameHashes[0], isICloudOffloaded: sig.isICloudOffloaded });
       }
     }
 
     for (const candidate of videoCandidates) {
-      const pHash = sigMap.get(candidate.asset.uri);
-      if (pHash) {
-        videoFirstFrameResults.push({ candidate, firstFrameFingerprint: pHash });
+      const entry = sigMap.get(candidate.asset.uri);
+      if (entry) {
+        videoFirstFrameResults.push({ candidate, firstFrameFingerprint: entry.pHash, isICloudOffloaded: entry.isICloudOffloaded });
       } else {
         const fallback = await timed('deep.video-first-frame.total', () => (
           getVideoFirstFrameFingerprint(candidate.asset)
@@ -189,11 +193,12 @@ export async function findDuplicateGroups(
     }
   }
 
-  const videosByFirstFrame = new Map<string, { candidate: Candidate; firstFrameFingerprint: string }[]>();
+  const videosByFirstFrame = new Map<string, { candidate: Candidate; firstFrameFingerprint: string; isICloudOffloaded?: boolean }[]>();
   for (const result of videoFirstFrameResults) {
     const group = videosByFirstFrame.get(result.firstFrameFingerprint) ?? [];
     group.push(result);
     videosByFirstFrame.set(result.firstFrameFingerprint, group);
+
   }
 
   // --- Pass 2: Video Mid+End Frame Fingerprinting for Collisions ---
@@ -202,12 +207,19 @@ export async function findDuplicateGroups(
     if (group.length === 1) {
       // No other video shares this first frame, so it cannot collide with anything under the
       // three-frame fingerprint either — record it directly without extracting more frames.
-      recordFingerprint(group[0].candidate, group[0].firstFrameFingerprint);
+      recordFingerprint(group[0].candidate, group[0].firstFrameFingerprint, group[0].isICloudOffloaded);
       continue;
     }
 
     for (const entry of group) {
-      collidingCandidates.push({ candidate: entry.candidate, firstFramePHash: entry.firstFrameFingerprint });
+      // iCloud-offloaded videos only have a poster-frame hash — the full video file is not on
+      // device, so Pass 2 (AVAssetImageGenerator on mid/end frames) would fail immediately
+      // with the same error as before. Record the poster-frame hash directly and skip Pass 2.
+      if (entry.isICloudOffloaded) {
+        recordFingerprint(entry.candidate, entry.firstFrameFingerprint, true);
+      } else {
+        collidingCandidates.push({ candidate: entry.candidate, firstFramePHash: entry.firstFrameFingerprint });
+      }
     }
   }
 
@@ -317,6 +329,11 @@ export async function findDuplicateGroups(
     let player: ReturnType<typeof createVideoPlayer> | null = null;
     try {
       const file = await timed('deep.video.get-media-file', () => getMediaFile(asset));
+      // Same iCloud-offloaded guard as getVideoFirstFrameFingerprint — bail out before
+      // allocating a native player for a file that isn't on disk.
+      if (!file.uri || file.uri.startsWith('ph://')) {
+        return getStreamingFileFingerprint(asset);
+      }
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const times = getVideoFrameTimes(asset);
       const thumbnails = await timed('deep.video.thumbnail-extract', () => (
@@ -352,6 +369,13 @@ export async function findDuplicateGroups(
     let player: ReturnType<typeof createVideoPlayer> | null = null;
     try {
       const file = await timed('deep.video.get-media-file', () => getMediaFile(asset));
+      // On iOS, getAssetInfoAsync returns localUri = '' for a video whose file is offloaded to
+      // iCloud. createVideoPlayer cannot open a missing local file and will stall for up to 30 s
+      // before the timeout fires. Bail out early so we never allocate a native player for an
+      // asset that isn't on disk.
+      if (!file.uri || file.uri.startsWith('ph://')) {
+        return getStreamingFileFingerprint(asset);
+      }
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const [firstFrameTime] = getVideoFrameTimes(asset);
       const [thumbnail] = await timed('deep.video.first-frame-extract', () => (
