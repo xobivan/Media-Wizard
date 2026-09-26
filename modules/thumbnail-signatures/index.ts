@@ -23,6 +23,10 @@ export interface ThumbnailSignaturesModule {
 export type NativeVideoFrameSignatureSuccess = {
   uri: string;
   frameHashes: string[];
+  /** True when the video file is offloaded to iCloud and the hash was computed from the
+   *  locally-cached poster frame rather than an actual decoded video frame. Pass 2
+   *  (mid/end-frame extraction) must be skipped for these assets. */
+  isICloudOffloaded?: boolean;
   error?: undefined;
 };
 
