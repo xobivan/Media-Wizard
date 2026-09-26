@@ -168,7 +168,9 @@ export async function findDuplicateGroups(
         const fallback = await timed('deep.video-first-frame.total', () => (
           getVideoFirstFrameFingerprint(candidate.asset)
         ));
-        videoFirstFrameResults.push({ candidate, firstFrameFingerprint: fallback });
+        if (fallback !== null) {
+          videoFirstFrameResults.push({ candidate, firstFrameFingerprint: fallback });
+        }
       }
     }
   } else {
@@ -180,7 +182,9 @@ export async function findDuplicateGroups(
           const firstFrameFingerprint = await timed('deep.video-first-frame.total', () => (
             getVideoFirstFrameFingerprint(candidate.asset)
           ));
-          videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
+          if (firstFrameFingerprint !== null) {
+            videoFirstFrameResults.push({ candidate, firstFrameFingerprint });
+          }
         })().finally(() => inFlightVideos.delete(tracked));
         inFlightVideos.add(tracked);
 
@@ -249,7 +253,9 @@ export async function findDuplicateGroups(
         recordFingerprint(candidate, [firstFramePHash, ...remainingHashes].join(':'));
       } else {
         const fallback = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
-        recordFingerprint(candidate, fallback);
+        if (fallback !== null) {
+          recordFingerprint(candidate, fallback);
+        }
       }
     }
   } else {
@@ -259,7 +265,9 @@ export async function findDuplicateGroups(
         let tracked: Promise<void>;
         tracked = (async () => {
           const fingerprint = await timed('deep.video-fingerprint.total', () => getVideoFingerprint(candidate.asset));
-          recordFingerprint(candidate, fingerprint);
+          if (fingerprint !== null) {
+            recordFingerprint(candidate, fingerprint);
+          }
         })().finally(() => inFlightVideoFull.delete(tracked));
         inFlightVideoFull.add(tracked);
 
@@ -320,7 +328,7 @@ export async function findDuplicateGroups(
     return [asset.filename, asset.duration, asset.width, asset.height].join(':');
   }
 
-  async function getVideoFingerprint(asset: MediaLibrary.Asset): Promise<string> {
+  async function getVideoFingerprint(asset: MediaLibrary.Asset): Promise<string | null> {
     // `createVideoPlayer` allocates a native decoder/player instance. Because we create one
     // per video while scanning a whole library, we must explicitly `release()` it in a
     // `finally` block — otherwise these native resources pile up across hundreds of videos
@@ -329,10 +337,10 @@ export async function findDuplicateGroups(
     let player: ReturnType<typeof createVideoPlayer> | null = null;
     try {
       const file = await timed('deep.video.get-media-file', () => getMediaFile(asset));
-      // Same iCloud-offloaded guard as getVideoFirstFrameFingerprint — bail out before
-      // allocating a native player for a file that isn't on disk.
+      // The video file is not on disk (offloaded to iCloud, corrupted thumbnail, etc.).
+      // There is nothing to compare, so return null to signal the caller to skip this asset.
       if (!file.uri || file.uri.startsWith('ph://')) {
-        return getStreamingFileFingerprint(asset);
+        return null;
       }
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const times = getVideoFrameTimes(asset);
@@ -362,19 +370,18 @@ export async function findDuplicateGroups(
     }
   }
 
-  async function getVideoFirstFrameFingerprint(asset: MediaLibrary.Asset): Promise<string> {
+  async function getVideoFirstFrameFingerprint(asset: MediaLibrary.Asset): Promise<string | null> {
     // Same native decoder/player lifecycle as getVideoFingerprint, but only ever requests the
     // first of the three timestamps (`getVideoFrameTimes(asset)[0]`, always 0.1s), so its hash
     // is identical to the first component of the full three-frame fingerprint below.
     let player: ReturnType<typeof createVideoPlayer> | null = null;
     try {
       const file = await timed('deep.video.get-media-file', () => getMediaFile(asset));
-      // On iOS, getAssetInfoAsync returns localUri = '' for a video whose file is offloaded to
-      // iCloud. createVideoPlayer cannot open a missing local file and will stall for up to 30 s
-      // before the timeout fires. Bail out early so we never allocate a native player for an
-      // asset that isn't on disk.
+      // The video file is not on disk (offloaded to iCloud + poster frame also unavailable).
+      // There is nothing to compare, so return null to signal the caller to skip this asset
+      // entirely rather than recording a meaningless metadata fingerprint.
       if (!file.uri || file.uri.startsWith('ph://')) {
-        return getStreamingFileFingerprint(asset);
+        return null;
       }
       player = await timed('deep.video.player-create', async () => createVideoPlayer(file.uri));
       const [firstFrameTime] = getVideoFrameTimes(asset);
