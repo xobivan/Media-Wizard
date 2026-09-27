@@ -8,5 +8,5 @@ export type ScanTarget = 'photoDuplicates' | 'videoDuplicates' | 'largeVideos';
 export const ALL_SCAN_TARGETS: ScanTarget[] = ['photoDuplicates', 'videoDuplicates', 'largeVideos'];
 export type ScanSummary = { photos: number; videos: number; total: number };
 export type MediaItem = { id: string; name: string; detail: string; savings: number };
-export type LargeVideo = MediaItem & { size: number; duration: number; estimatedOutputSize: number; canCompress: boolean };
+export type LargeVideo = MediaItem & { size: number; duration: number; estimatedOutputSize: number; canCompress: boolean; localUri?: string };
 export type Album = MediaLibrary.Album;
