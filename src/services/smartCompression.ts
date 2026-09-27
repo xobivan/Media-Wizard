@@ -87,7 +87,7 @@ export async function getDeviceStorageInfo(): Promise<{ freeBytes: number; total
 }
 
 export function determineStorageStrategy(
-  selectedVideos: Pick<LargeVideo, 'size' | 'duration'>[],
+  selectedVideos: Pick<LargeVideo, 'size' | 'duration' | 'estimatedOutputSize'>[],
   freeSpaceBytes: number,
   quality: CompressionQuality = 'balanced',
 ): StorageStrategy {
@@ -98,8 +98,7 @@ export function determineStorageStrategy(
 
   for (const video of selectedVideos) {
     totalOriginalBytes += video.size;
-    const plan = estimatePlanFromAsset(video, quality);
-    estimatedCompressedBytes += plan.estimatedOutputBytes;
+    estimatedCompressedBytes += video.estimatedOutputSize;
   }
 
   // Total bytes needed: originals + all compressed (worst case, all exist at once)
@@ -125,9 +124,11 @@ export function createCompressionPlan(
   const sourceBitrate = metadata.bitrate ?? Math.round((video.size * 8) / Math.max(video.duration, 1));
   const bitrateMultiplier = quality === 'high' ? 0.72 : quality === 'maximum_savings' ? 0.38 : 0.52;
   const targetBitrate = Math.max(1_000_000, Math.round(sourceBitrate * bitrateMultiplier));
-  const reduceResolution = quality === 'maximum_savings' && metadata.width >= 3840;
-  const outputWidth = reduceResolution ? 1920 : metadata.width;
-  const outputHeight = reduceResolution ? 1080 : metadata.height;
+  const longestEdge = Math.max(metadata.width, metadata.height);
+  const reduceResolution = quality === 'maximum_savings' && longestEdge >= 3840;
+  const rawMaxSize = reduceResolution ? 1920 : longestEdge;
+  const outputWidth = rawMaxSize % 2 === 0 ? rawMaxSize : rawMaxSize + 1;
+  const outputHeight = reduceResolution ? 1080 : Math.min(metadata.width, metadata.height);
   const outputFps = quality === 'maximum_savings' && metadata.fps > 30 ? 30 : metadata.fps;
   const audioBitrate = metadata.hasAudio ? 128_000 : 0;
   const estimatedOutputBytes = Math.round(((targetBitrate + audioBitrate) * Math.max(metadata.durationMs, 1)) / 8_000);
@@ -214,11 +215,10 @@ export async function compressVideo(
     let outputUri: string = '';
 
     try {
-      // Try to avoid maxSize parameter which can cause issues on some devices
       outputUri = await Video.compress(inputUri, {
         compressionMethod: 'manual',
         bitrate: plan.targetBitrate,
-        // maxSize parameter removed - let the library handle resolution automatically
+        maxSize: plan.outputWidth,
         getCancellationId: (id) => { cancellationId = id; },
       }, (progress) => {
         if (signal.cancelled && cancellationId) {
