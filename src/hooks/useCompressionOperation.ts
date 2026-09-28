@@ -5,7 +5,7 @@ import { File } from 'expo-file-system';
 import type { LargeVideo } from '../components/types/mediaWizardTypes';
 import type { CompressionQuality } from '../services/smartCompression';
 import { getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, compressVideo } from '../services/smartCompression';
-import { getMediaFile } from '../services/mediaAssetFile';
+import { getMediaFile, clearMediaFileCache } from '../services/mediaAssetFile';
 import { count, report, reset, timed } from '../services/compressionProfiler';
 
 export function useCompressionOperation() {
@@ -214,6 +214,7 @@ export function useCompressionOperation() {
     } else {
       setCompressionState('complete');
     }
+    clearMediaFileCache();
   };
 
   return {
