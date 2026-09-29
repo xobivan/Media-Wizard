@@ -5,7 +5,8 @@ import { File } from 'expo-file-system';
 import type { LargeVideo } from '../components/types/mediaWizardTypes';
 import type { CompressionQuality } from '../services/smartCompression';
 import { getDeviceStorageInfo, determineStorageStrategy, type StorageStrategy, compressVideo } from '../services/smartCompression';
-import { getMediaFile } from '../services/mediaAssetFile';
+import { getMediaFile, clearMediaFileCache } from '../services/mediaAssetFile';
+import { count, report, reset, timed } from '../services/compressionProfiler';
 
 export function useCompressionOperation() {
   const [compressionProgress, setCompressionProgress] = useState(0);
@@ -86,6 +87,7 @@ export function useCompressionOperation() {
     setCompressionError(null);
     setCompressionProgress(0);
     setCompressionCurrent(0);
+    reset();
 
     let savedBytes = 0;
     const failures: string[] = [];
@@ -94,60 +96,80 @@ export function useCompressionOperation() {
     let permissionDeniedCount = 0;
     const deleteImmediately = strategy?.deleteImmediately ?? false;
 
-    // Single pass: Compress all videos
-    for (let index = 0; index < selectedVideos.length; index += 1) {
+    // Batch processing: Compress 2 videos concurrently
+    const assetMap = new Map(scannedAssets.map(a => [a.id, a]));
+    const BATCH_SIZE = 2;
+    const progresses = new Array(selectedVideos.length).fill(0);
+
+    for (let batchStart = 0; batchStart < selectedVideos.length; batchStart += BATCH_SIZE) {
       if (compressionSignal.current.cancelled) break;
 
-      if (index > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
+      if (batchStart > 0) {
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      const video = selectedVideos[index];
-      const asset = scannedAssets.find((candidate) => candidate.id === video.id);
-      if (!asset) {
-        failures.push(`${video.name}: source file is no longer available.`);
-        continue;
-      }
-      setCompressionCurrent(index + 1);
-      try {
-        const inputFile = await getMediaFile(asset);
-        const result = await compressVideo(inputFile.uri, video, quality, (progress) => {
-          setCompressionProgress(Math.round(((index + progress / 100) / selectedVideos.length) * 100));
-        }, compressionSignal.current);
+      const batch = selectedVideos.slice(batchStart, batchStart + BATCH_SIZE);
+      
+      await Promise.all(batch.map(async (video, batchIndex) => {
+        if (compressionSignal.current.cancelled) return;
 
-        try {
-          const savedAsset = await MediaLibrary.createAssetAsync(result.outputUri);
-          if (!savedAsset?.id) throw new Error('The compressed video was not saved to the media library.');
-        } catch (libraryError) {
-          throw new Error(`Failed to save compressed video: ${libraryError instanceof Error ? libraryError.message : 'unknown error'}`);
+        const globalIndex = batchStart + batchIndex;
+        // Optimistically set the current counter to the highest index we are working on
+        setCompressionCurrent((current) => Math.max(current, globalIndex + 1));
+
+        const asset = assetMap.get(video.id);
+        if (!asset) {
+          failures.push(`${video.name}: source file is no longer available.`);
+          progresses[globalIndex] = 1;
+          return;
         }
 
         try {
-          new File(result.outputUri).delete();
-        } catch (deleteError) {
-          console.warn('Failed to delete temp compressed file:', deleteError);
-        }
+          const inputUri = video.localUri || (await timed('compression.get-media-file', () => getMediaFile(asset))).uri;
+          const result = await timed(`compression.compress-video.${quality}`, () => compressVideo(inputUri, video, quality, (progress) => {
+            progresses[globalIndex] = progress / 100;
+            const totalProgress = progresses.reduce((a, b) => a + b, 0);
+            setCompressionProgress(Math.round((totalProgress / selectedVideos.length) * 100));
+          }, compressionSignal.current));
 
-        if (deleteOriginals) {
-          if (deleteImmediately) {
-            try {
-              await MediaLibrary.deleteAssetsAsync([asset.id]);
-              successfullyDeletedAssetIds.push(asset.id);
-            } catch (deleteError) {
-              const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
-              permissionDeniedCount += 1;
-              console.warn(`Original deletion denied or failed for ${video.name}:`, message);
-            }
-          } else {
-            assetsToDelete.push(asset.id);
+          try {
+            const savedAsset = await timed('compression.save-asset', () => MediaLibrary.createAssetAsync(result.outputUri));
+            if (!savedAsset?.id) throw new Error('The compressed video was not saved to the media library.');
+          } catch (libraryError) {
+            throw new Error(`Failed to save compressed video: ${libraryError instanceof Error ? libraryError.message : 'unknown error'}`);
           }
-        }
 
-        savedBytes += result.inputSizeBytes - result.outputSizeBytes;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'compression failed.';
-        failures.push(`${video.name}: ${errorMessage}`);
-      }
+          try {
+            new File(result.outputUri).delete();
+          } catch (deleteError) {
+            console.warn('Failed to delete temp compressed file:', deleteError);
+          }
+
+          if (deleteOriginals) {
+            if (deleteImmediately) {
+              try {
+                await MediaLibrary.deleteAssetsAsync([asset.id]);
+                successfullyDeletedAssetIds.push(asset.id);
+              } catch (deleteError) {
+                const message = deleteError instanceof Error ? deleteError.message : 'unknown error';
+                permissionDeniedCount += 1;
+                console.warn(`Original deletion denied or failed for ${video.name}:`, message);
+              }
+            } else {
+              assetsToDelete.push(asset.id);
+            }
+          }
+
+          savedBytes += result.inputSizeBytes - result.outputSizeBytes;
+          progresses[globalIndex] = 1;
+          count('compression.videos.success');
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'compression failed.';
+          failures.push(`${video.name}: ${errorMessage}`);
+          progresses[globalIndex] = 1;
+          count('compression.videos.failure');
+        }
+      }));
     }
 
     // After all compressions, delete remaining originals in batch
@@ -165,6 +187,8 @@ export function useCompressionOperation() {
     if (successfullyDeletedAssetIds.length > 0) {
       onVideoDeleted(successfullyDeletedAssetIds);
     }
+
+    report();
 
     if (permissionDeniedCount > 0 && !compressionSignal.current.cancelled) {
       const videoWord = permissionDeniedCount === 1 ? 'video' : 'videos';
@@ -190,6 +214,7 @@ export function useCompressionOperation() {
     } else {
       setCompressionState('complete');
     }
+    clearMediaFileCache();
   };
 
   return {

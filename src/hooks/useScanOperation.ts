@@ -6,6 +6,7 @@ import { findDuplicateGroups } from '../services/duplicateDetection';
 import { findDuplicateGroupsLegacy } from '../services/duplicateDetectionLegacy';
 import { findLargeVideos } from '../services/largeVideoDetection';
 import { count, report, reset, timed } from '../services/scanProfiler';
+import { clearMediaFileCache } from '../services/mediaAssetFile';
 import * as MediaLibrary from 'expo-media-library/legacy';
 
 class ScanAbortedError extends Error {}
@@ -59,6 +60,7 @@ export function useScanOperation() {
     setDuplicateGroups([]);
     setScannedAssets([]);
     setDuplicateStorageSaved(0);
+    clearMediaFileCache();
     onScanStart();
 
     try {
@@ -145,6 +147,8 @@ export function useScanOperation() {
       if (error instanceof ScanAbortedError) return;
       setScanState('error');
       setScanError(error instanceof Error ? error.message : 'The media library could not be scanned.');
+    } finally {
+      clearMediaFileCache();
     }
   };
 

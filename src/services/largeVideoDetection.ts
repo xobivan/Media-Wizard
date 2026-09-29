@@ -14,7 +14,8 @@ export async function findLargeVideos(
 
   for (let index = 0; index < videos.length; index += 1) {
     const asset = videos[index];
-    const size = (await getMediaFile(asset)).size;
+    const mediaFile = await getMediaFile(asset);
+    const size = mediaFile.size;
 
     if (typeof size === 'number' && size >= LARGE_VIDEO_THRESHOLD) {
       const plan = estimatePlanFromAsset({ size, duration: asset.duration });
@@ -27,6 +28,7 @@ export async function findLargeVideos(
         duration: asset.duration,
         estimatedOutputSize: plan.estimatedOutputBytes,
         canCompress: !plan.shouldSkip,
+        localUri: mediaFile.uri,
       });
     }
 
