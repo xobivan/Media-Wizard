@@ -59,7 +59,6 @@ export function ResultsScreen(props: ResultsScreenProps) {
 
   const handleCancelConfirmed = () => {
     props.onCancelCompressionConfirmed();
-    closeCompressionSheet();
   };
 
   const handleDismissSuccess = () => {
