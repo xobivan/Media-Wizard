@@ -1,0 +1,2 @@
+modules/**/android/**/*.kt linguist-detectable=true
+modules/**/ios/**/*.swift linguist-detectable=true
