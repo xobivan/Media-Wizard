@@ -1,6 +1,6 @@
 import { useState } from 'react';
+import { Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { CleanupScreen } from './src/components/screens/CleanupScreen';
 import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
 import { ResultsScreen } from './src/components/screens/ResultsScreen';
@@ -70,7 +70,7 @@ export default function App() {
     confirmAbortScan(abortScanAndReset);
   };
 
-  const { screen, goHome, goResults, goCleanup, goDone } = useAppNavigation({
+  const { screen, goHome, goResults, goDone } = useAppNavigation({
     scanState,
     onConfirmScanAbort: confirmScanAbort,
     onResetCompression: resetCompressionState,
@@ -108,7 +108,6 @@ export default function App() {
     );
   };
 
-
   const estimatedSavings = calculateEstimatedSavings(duplicateGroups, selectedSavings);
 
   const content = screen === 'home'
@@ -142,45 +141,51 @@ export default function App() {
           largeVideos={largeVideos}
           duplicateGroups={duplicateGroups}
           scanTargets={scanTargets}
+          // Compression state
+          keepOriginals={keepOriginals}
+          compressionQuality={compressionQuality}
+          compressionState={compressionState}
+          compressionProgress={compressionProgress}
+          compressionCurrent={compressionCurrent}
+          compressionError={compressionError}
+          selectedSavings={selectedSavings}
+          // Handlers
           onTabChange={setTab}
           onToggleLarge={toggleSelection}
           onSelectAll={selectAll}
           onRetry={() => void startScan()}
           onBack={() => void (scanState === 'scanning' ? confirmScanAbort() : goHome())}
           onAbortScan={abortScanAndReset}
-          onContinue={() => {
-            prepareCompression();
-            goCleanup();
+          onFinish={() => {
+            const totalSavedBytes = compressionStorageSaved + duplicateStorageSaved;
+            const savedGb = (totalSavedBytes / (1024 * 1024 * 1024)).toFixed(2);
+            Alert.alert(
+              'Done?',
+              `You are about to save ${savedGb} gigabytes. Want to proceed ?`,
+              [
+                { text: 'No', style: 'cancel' },
+                { text: 'Yes', onPress: goDone },
+              ]
+            );
           }}
           onDeleteDuplicateGroup={deleteDuplicateGroup}
           onDeleteAllDuplicateGroups={deleteAllDuplicateGroups}
+          onKeepOriginalsChange={setKeepOriginals}
+          onCompressionQualityChange={setCompressionQuality}
+          onStartCompression={() => void startCompression(compressionQuality, !keepOriginals)}
+          onRequestCancelCompression={cancelCompression}
+          onCancelCompressionConfirmed={() => {
+            prepareCompression();
+          }}
         />
-      : screen === 'cleanup'
-        ? <CleanupScreen
-            largeVideos={largeVideos}
-            selectedLarge={selectedLarge}
-            selectedSavings={selectedSavings}
-            keepOriginals={keepOriginals}
-            compressionQuality={compressionQuality}
-            compressionProgress={compressionProgress}
-            compressionCurrent={compressionCurrent}
-            compressionState={compressionState}
-            compressionError={compressionError}
-            onBack={goResults}
-            onKeepOriginalsChange={setKeepOriginals}
-            onCompressionQualityChange={setCompressionQuality}
-            onCancelCompression={cancelCompression}
-            onStartCompression={() => void startCompression(compressionQuality, !keepOriginals)}
-            onDone={goDone}
-          />
-        : <DoneScreen
-            selectedSavings={compressionStorageSaved / (1024 * 1024)}
-            duplicateStorageSaved={duplicateStorageSaved}
-            onHome={() => {
-              resetCompressionState();
-              goHome();
-            }}
-          />;
+      : <DoneScreen
+          selectedSavings={compressionStorageSaved / (1024 * 1024)}
+          duplicateStorageSaved={duplicateStorageSaved}
+          onHome={() => {
+            resetCompressionState();
+            goHome();
+          }}
+        />;
 
   return <SafeAreaProvider>{content}</SafeAreaProvider>;
 }

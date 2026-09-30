@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler } from 'react-native';
 import type { ScanState } from '../components/types/mediaWizardTypes';
 
-export type Screen = 'home' | 'results' | 'cleanup' | 'done';
+export type Screen = 'home' | 'results' | 'done';
 
 type AppNavigationOptions = {
   scanState: ScanState;
@@ -26,12 +26,10 @@ export function useAppNavigation({
     const handleBackPress = () => {
       if (screen === 'results') {
         if (scanState === 'scanning') onConfirmScanAbortRef.current();
-        else setScreen('home');
-        return true;
-      }
-
-      if (screen === 'cleanup') {
-        setScreen('results');
+        else {
+          onResetCompressionRef.current();
+          setScreen('home');
+        }
         return true;
       }
 
@@ -48,16 +46,17 @@ export function useAppNavigation({
     return () => subscription.remove();
   }, [scanState, screen]);
 
-  const goHome = useCallback(() => setScreen('home'), []);
+  const goHome = useCallback(() => {
+    onResetCompressionRef.current();
+    setScreen('home');
+  }, []);
   const goResults = useCallback(() => setScreen('results'), []);
-  const goCleanup = useCallback(() => setScreen('cleanup'), []);
   const goDone = useCallback(() => setScreen('done'), []);
 
   return {
     screen,
     goHome,
     goResults,
-    goCleanup,
     goDone,
   };
 }

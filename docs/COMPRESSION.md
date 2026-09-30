@@ -167,7 +167,9 @@ as a compression failure.
 
 ## 9. Cancellation
 
-`cancelCompression` sets a mutable cancellation signal. The signal is:
+The **Cancel compression** button is shown in the bottom sheet while compression is running (it replaces the Start compression button). Tapping it shows a confirmation alert before acting.
+
+On confirmation, `cancelCompression` sets a mutable cancellation signal. The signal is:
 
 - Checked between videos.
 - Passed to `compressVideo`.
@@ -180,8 +182,8 @@ After cancellation:
 
 - Already-created compressed videos remain in the Media Library.
 - Pending originals are not batch-deleted.
-- Compression returns to `idle`.
-- The user sees a cancellation message.
+- Compression state resets to `idle` via `prepareCompression()`.
+- The bottom sheet closes and the user is returned to the Results screen.
 
 ## 10. Original deletion and state updates
 
@@ -216,3 +218,12 @@ The compression workflow is designed to preserve originals when:
 
 Temporary-file deletion failures are logged separately and do not invalidate a
 verified Media Library asset.
+
+## 12. Media-file URI cache
+
+`mediaAssetFile.ts` maintains an in-memory `Map` from asset ID to resolved`File` on iOS (on Android the URI is used directly and nothing is cached).
+
+The cache is cleared in two situations:
+
+- At the end of `performCompression` (success or error path), so stale URIs do not accumulate across repeated compressions in the same session.
+- In `resetCompressionState()`, which is called when the user leaves the Done screen back to Home, or when a scan is aborted. This guarantees the cache is empty before any new scan, regardless of whether compression ran, was cancelled, or never started.

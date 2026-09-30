@@ -2,7 +2,7 @@
 
 ## Project overview
 
-MediaWizard is an Expo SDK 57 React Native app for Android and iOS. It scans the user's photo and video library locally, detects duplicate media, identifies large videos, lets the user review and delete duplicate copies, and prepares selected large videos for compression.
+MediaWizard is an Expo SDK 57 React Native app for Android and iOS. It scans the user's photo and video library locally, detects duplicate media, identifies large videos, lets the user review and delete duplicate copies, and compresses selected large videos using the device's hardware encoder.
 
 The project is located at `E:\MediaWizard`.
 
@@ -62,44 +62,58 @@ The project is located at `E:\MediaWizard`.
   - Storage saved is calculated from the deleted assets' actual byte sizes.
   - A storage-saved alert is displayed.
 
-### Large-video results
+### Large-video results and compression
 
 - Large videos are detected from actual file sizes.
 - The current threshold is 200 MB, defined in `src/services/largeVideoDetection.ts`.
 - Results show file name, size, and duration.
-- Users can select individual videos.
-- Users can Select all when large videos exist.
-- If no large videos exist:
-  - Select all is hidden.
-  - Continue to cleanup is hidden.
-  - A No large videos found message is shown.
+- Users can select individual videos or Select all.
+- If no large videos exist a "No large videos found" card is shown and the compress button is hidden.
+- Tapping **"Compress N videos"** (disabled when 0 are selected) opens a bottom sheet over the Results screen.
 
-### Cleanup and completion UI
+### Compression bottom sheet
 
-- Users can review selected large videos.
-- Users can choose:
-  - Keep original files.
-  - Delete originals after verifying compression.
-- A thermal/battery-conscious processing message is shown.
-- Completion screen shows storage saved from duplicate deletion plus the current compression estimate.
-- The current compression action is still a UI placeholder; it does not perform real video compression.
+- Slides up over the Results screen; the Results screen remains mounted underneath.
+- Configurable options:
+  - `Balanced`, `High quality`, or `Maximum savings` compression quality.
+  - Keep original files or delete originals after verifying.
+- Displays estimated storage savings in the sheet header.
+- A single **Start compression** button starts the job; during compression it changes to **Cancel compression**.
+- Live progress bar and "Compressing N of M · X%" label.
+- Cancelling mid-compression shows a confirmation alert. On confirmation the compression signal is set, state resets, and the sheet closes.
+- On completion the sheet shows a success state with the amount saved and a **Continue reviewing** button to dismiss.
+- The sheet can be swiped down to dismiss (gesture is blocked while compressing).
+- Tapping the scrim outside the sheet also dismisses it (blocked while compressing).
+- After dismissal the user is back on the Results screen and can continue reviewing duplicates or compress again.
+
+### Storage strategy for deletion
+
+- When originals will be deleted, the app checks free storage before starting.
+- If enough space is available all originals are deleted together at the end (one permission dialog).
+- If space is insufficient each original is deleted immediately after its compressed copy is saved (one dialog per video; the user must be present).
+
+### Done screen
+
+- Reached via the **Done** button in the Results screen header.
+- Combines bytes saved by duplicate deletion and bytes saved by compression.
+- Returning Home resets compression state and clears the media-file URI cache.
 
 ## Architecture
 
 ### Main orchestration
 
-- [App.tsx](./App.tsx) owns navigation, permissions, album selection, scan state, cancellation, result state, deletion, and storage totals.
+- [App.tsx](./App.tsx) owns navigation, permissions, album selection, scan state, cancellation, result state, deletion, compression state, and storage totals. All compression props flow from App.tsx through ResultsScreen into CompressionBottomSheet.
 
 ### Screens
 
 - [HomeScreen.tsx](./src/components/screens/HomeScreen.tsx): source selection, scan mode, permissions, and start scan.
-- [ResultsScreen.tsx](./src/components/screens/ResultsScreen.tsx): result screen composition.
-- [CleanupScreen.tsx](./src/components/screens/CleanupScreen.tsx): selected video cleanup options.
+- [ResultsScreen.tsx](./src/components/screens/ResultsScreen.tsx): result screen composition; owns compression bottom sheet visibility state.
+- [CompressionBottomSheet.tsx](./src/components/screens/CompressionBottomSheet.tsx): modal bottom sheet for compression configuration, progress, and success/error state.
 - [DoneScreen.tsx](./src/components/screens/DoneScreen.tsx): completion summary.
 
 ### Results components
 
-- `src/components/results/ResultsHeader.tsx`
+- `src/components/results/ResultsHeader.tsx` — back button and optional "Done" button
 - `src/components/results/ResultsScanState.tsx`
 - `src/components/results/ResultsSummary.tsx`
 - `src/components/results/ResultsTabs.tsx`
@@ -110,7 +124,15 @@ The project is located at `E:\MediaWizard`.
 - [duplicateDetection.ts](./src/services/duplicateDetection.ts): deep photo normalization plus exact video hashing.
 - [duplicateDetectionLegacy.ts](./src/services/duplicateDetectionLegacy.ts): preserved fast exact-file detector used by Fast scan.
 - [largeVideoDetection.ts](./src/services/largeVideoDetection.ts): file-size threshold detection.
-- [mediaAssetFile.ts](./src/services/mediaAssetFile.ts): Android direct URI handling and iOS local URI resolution.
+- [mediaAssetFile.ts](./src/services/mediaAssetFile.ts): Android direct URI handling and iOS local URI resolution with in-memory cache.
+
+### Navigation states
+
+```text
+home -> results -> done
+```
+
+Compression is inline on the Results screen (bottom sheet). There is no separate cleanup screen.
 
 ### Shared code
 
@@ -129,6 +151,7 @@ The app uses:
 - `expo-crypto`.
 - `expo-image-manipulator`.
 - `react-native-safe-area-context`.
+- `react-native-compressor` for hardware video encoding.
 
 Because `expo-image-manipulator` is a native module, any development client built before it was installed must be rebuilt:
 
@@ -170,43 +193,7 @@ Any development client built before the Swift file was added must be rebuilt wit
    - The threshold is currently hardcoded.
    - There is no user-configurable threshold yet.
 
-5. Compression is not implemented.
-   - The cleanup screen describes efficient encoding and thermal safeguards, but no encoder is connected.
-   - Original deletion is not connected to a real compression result.
-
-6. Storage savings from compression are estimates.
-   - Duplicate deletion savings use actual deleted file sizes.
-   - Compression savings still use the existing estimate field and should be replaced with actual output size differences.
-
-7. No automated test suite currently covers permissions, scan cancellation, duplicate grouping, deletion, or threshold boundaries.
-
-## Next implementation milestone
-
-The next major bullet point is **real mobile video compression**:
-
-1. Select an encoder approach that works on Android and iOS.
-2. Prefer hardware/native codecs where available.
-3. Process one video at a time to limit memory, heat, and battery usage.
-4. Add progress and cancellation for compression.
-5. Pause or stop when the device is too hot or battery is low, using platform APIs where available.
-6. Write compressed output to a temporary location first.
-7. Verify the output before deleting the original.
-8. Respect the user's Keep original files / Delete originals after verifying choice.
-9. Calculate actual storage saved from original size minus compressed output size.
-10. Surface failures per file without losing completed results.
-
-## Recommended follow-up work before compression
-
-- Rebuild and test the current app on a physical Android device after installing `expo-image-manipulator`.
-- Test Fast and Deep scan modes with:
-  - Exact copied files.
-  - Screenshots saved with different compression.
-  - Similar but different photos.
-  - Unsupported or cloud-only assets.
-  - Large libraries.
-- Optimize hashing before production use.
-- Consider moving scan and deletion orchestration out of `App.tsx` into services/hooks as the feature set grows.
-- Add tests for duplicate counts, oldest-original selection, bulk deletion, storage calculations, and scan cancellation.
+5. No automated test suite currently covers permissions, scan cancellation, duplicate grouping, deletion, or threshold boundaries.
 
 ## Validation
 

@@ -24,6 +24,7 @@ export function useCompressionOperation() {
     setCompressionCurrent(0);
     setCompressionError(null);
     setCompressionStorageSaved(0);
+    clearMediaFileCache();
   };
 
   const prepareCompression = () => {
@@ -203,7 +204,7 @@ export function useCompressionOperation() {
     if (compressionSignal.current.cancelled) {
       setCompressionProgress(0);
       setCompressionState('idle');
-      setCompressionError('Compression cancelled. Compressed videos were saved but originals were not deleted.');
+      setCompressionError(null);
       return;
     }
 

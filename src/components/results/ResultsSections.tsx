@@ -5,7 +5,7 @@ import type { LargeVideo, ResultTab } from '../types/mediaWizardTypes';
 import type { DuplicateGroup } from '../../services/duplicateDetection';
 import { styles } from '../styles/mediaWizardStyles';
 
-type SectionProps = { duplicateGroups: DuplicateGroup[]; largeVideos: LargeVideo[]; selectedLarge: string[]; onToggleLarge: (id: string) => void; onSelectAll: () => void; onContinue: () => void; onDeleteDuplicateGroup: (group: DuplicateGroup) => void; onDeleteAllDuplicateGroups: (groups: DuplicateGroup[]) => void };
+type SectionProps = { duplicateGroups: DuplicateGroup[]; largeVideos: LargeVideo[]; selectedLarge: string[]; onToggleLarge: (id: string) => void; onSelectAll: () => void; onOpenCompressionSheet: () => void; onDeleteDuplicateGroup: (group: DuplicateGroup) => void; onDeleteAllDuplicateGroups: (groups: DuplicateGroup[]) => void };
 
 export function ResultsSections({ tab, ...props }: SectionProps & { tab: ResultTab }) {
   if (tab === 'Photos') return <DuplicatePhotos groups={props.duplicateGroups.filter((group) => group.mediaType === 'photo')} onDeleteGroup={props.onDeleteDuplicateGroup} onDeleteAllGroups={props.onDeleteAllDuplicateGroups} />;
@@ -99,7 +99,7 @@ function LargeVideos({
   selectedLarge,
   onToggleLarge,
   onSelectAll,
-  onContinue,
+  onOpenCompressionSheet,
 }: SectionProps) {
   const hasLargeVideos = largeVideos.length > 0;
   const allSelected =
@@ -147,11 +147,12 @@ function LargeVideos({
       ))}
 
       <Pressable
-        style={styles.primaryButton}
-        onPress={onContinue}
+        style={[styles.primaryButton, selectedLarge.length === 0 && styles.primaryButtonDisabled]}
+        disabled={selectedLarge.length === 0}
+        onPress={onOpenCompressionSheet}
       >
         <Text style={styles.primaryButtonText}>
-          Continue to cleanup
+          Compress {selectedLarge.length} {selectedLarge.length === 1 ? 'video' : 'videos'}
         </Text>
       </Pressable>
     </>
