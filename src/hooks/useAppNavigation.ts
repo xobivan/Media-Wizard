@@ -26,7 +26,10 @@ export function useAppNavigation({
     const handleBackPress = () => {
       if (screen === 'results') {
         if (scanState === 'scanning') onConfirmScanAbortRef.current();
-        else setScreen('home');
+        else {
+          onResetCompressionRef.current();
+          setScreen('home');
+        }
         return true;
       }
 
@@ -43,7 +46,10 @@ export function useAppNavigation({
     return () => subscription.remove();
   }, [scanState, screen]);
 
-  const goHome = useCallback(() => setScreen('home'), []);
+  const goHome = useCallback(() => {
+    onResetCompressionRef.current();
+    setScreen('home');
+  }, []);
   const goResults = useCallback(() => setScreen('results'), []);
   const goDone = useCallback(() => setScreen('done'), []);
 
