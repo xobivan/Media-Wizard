@@ -24,6 +24,7 @@ export function useCompressionOperation() {
     setCompressionCurrent(0);
     setCompressionError(null);
     setCompressionStorageSaved(0);
+    clearMediaFileCache();
   };
 
   const prepareCompression = () => {
