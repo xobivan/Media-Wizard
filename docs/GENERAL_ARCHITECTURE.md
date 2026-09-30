@@ -28,7 +28,8 @@ compression algorithms.
 - [`useScanOperation.ts`](../src/hooks/useScanOperation.ts) runs the library
   scan and coordinates duplicate and large-video detection.
 - [`useCompressionOperation.ts`](../src/hooks/useCompressionOperation.ts)
-  manages compression state and runs compression/deletion.
+  manages compression state and runs compression/deletion. Its
+  `resetCompressionState()` also clears the media-file URI cache.
 - [`useDuplicateCleanup.ts`](../src/hooks/useDuplicateCleanup.ts) handles
   duplicate deletion dialogs, Media Library deletion, and alerts.
 - [`useAppNavigation.ts`](../src/hooks/useAppNavigation.ts) owns screen
@@ -49,16 +50,20 @@ compression algorithms.
 - [`mediaSavings.ts`](../src/services/mediaSavings.ts) calculates the
   estimated savings shown in Results.
 - [`mediaAssetFile.ts`](../src/services/mediaAssetFile.ts) resolves a Media
-  Library asset to a local file representation.
+  Library asset to a local file representation, caching results on iOS.
 
 ### Screens and presentation components
 
 - [`HomeScreen.tsx`](../src/components/screens/HomeScreen.tsx) selects the
   source, scan depth, independent scan categories, and permissions.
 - [`ResultsScreen.tsx`](../src/components/screens/ResultsScreen.tsx) displays
-  scan progress/errors, summaries, duplicate groups, and large videos.
-- [`CleanupScreen.tsx`](../src/components/screens/CleanupScreen.tsx)
-  configures compression and displays progress.
+  scan progress/errors, summaries, duplicate groups, and large videos. It also
+  hosts the compression bottom sheet and owns its visibility state.
+- [`CompressionBottomSheet.tsx`](../src/components/screens/CompressionBottomSheet.tsx)
+  is a modal bottom sheet rendered over `ResultsScreen`. It lets the user
+  configure and start compression, shows live progress, and displays the
+  success or error state. The sheet can be dismissed by tapping the scrim,
+  swiping down, or pressing Cancel.
 - [`DoneScreen.tsx`](../src/components/screens/DoneScreen.tsx) displays the
   final storage-saved total.
 - Components under
@@ -70,8 +75,11 @@ compression algorithms.
 The navigation states are:
 
 ```text
-home -> results -> cleanup -> done
+home -> results -> done
 ```
+
+Compression no longer has its own screen. It happens inline on the Results
+screen via a bottom sheet.
 
 ### Home
 
@@ -104,18 +112,27 @@ After a successful scan:
 - The summary shows counts for the media types that were scanned.
 - Only tabs for selected categories are visible: Photos for picture duplicates,
   Videos for video duplicates, and Large files for large videos.
+- A **"Done"** button in the header is available at all times after scanning.
+  Tapping it navigates to the Done screen.
 
-The user can delete duplicate groups or continue to compression setup.
+The user can delete duplicate groups on the Photos and Videos tabs without
+leaving the screen. On the Large files tab, tapping **"Compress N videos"**
+opens the compression bottom sheet.
 
-### Cleanup
+### Compression bottom sheet
 
-The user chooses:
+The bottom sheet slides up over the Results screen. It provides:
 
-- `balanced`, `high`, or `maximum_savings` compression quality.
-- Whether to keep original files.
+- Compression quality selection (`balanced`, `high`, `maximum_savings`).
+- Keep / delete originals toggle.
+- A single **"Start compression"** button that switches to **"Cancel
+  compression"** while running.
+- A live progress bar and "Compressing N of M · X%" label.
+- A success state with a "Continue reviewing" dismiss button.
+- Swipe-down gesture to dismiss (blocked during active compression).
 
-The screen displays estimated savings, selected videos, progress, cancellation,
-completion, and errors.
+Dismissing the sheet always returns the user to the Results screen with their
+duplicate review intact.
 
 ### Done
 
@@ -124,8 +141,8 @@ The Done screen combines:
 - Bytes saved by compression.
 - Bytes saved by duplicate deletion.
 
-Returning Home resets compression state. A new scan also resets compression
-state before showing new Results.
+Returning Home resets compression state and clears the media-file URI cache.
+A new scan also resets compression state before showing new Results.
 
 ## 3. Main data flow
 
@@ -192,6 +209,8 @@ The remaining logic in [`App.tsx`](../App.tsx) is intentionally orchestration:
 - Confirm or abort a scan.
 - Pass selected videos and scanned assets into compression.
 - Remove deleted compressed originals from related state.
+- Pass all compression state and handlers directly into `ResultsScreen` (which
+  forwards them to `CompressionBottomSheet`).
 - Select the appropriate screen.
 - Pass props and event callbacks to screen components.
 
