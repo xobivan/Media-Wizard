@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DoneScreen } from './src/components/screens/DoneScreen';
 import { HomeScreen } from './src/components/screens/HomeScreen';
@@ -155,7 +156,18 @@ export default function App() {
           onRetry={() => void startScan()}
           onBack={() => void (scanState === 'scanning' ? confirmScanAbort() : goHome())}
           onAbortScan={abortScanAndReset}
-          onFinish={goDone}
+          onFinish={() => {
+            const totalSavedBytes = compressionStorageSaved + duplicateStorageSaved;
+            const savedGb = (totalSavedBytes / (1024 * 1024 * 1024)).toFixed(2);
+            Alert.alert(
+              'Done?',
+              `You are about to save ${savedGb} gigabytes. Want to proceed ?`,
+              [
+                { text: 'No', style: 'cancel' },
+                { text: 'Yes', onPress: goDone },
+              ]
+            );
+          }}
           onDeleteDuplicateGroup={deleteDuplicateGroup}
           onDeleteAllDuplicateGroups={deleteAllDuplicateGroups}
           onKeepOriginalsChange={setKeepOriginals}
